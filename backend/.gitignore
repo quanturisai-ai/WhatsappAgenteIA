@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+logs/
+whatsapp_sessions/
+chroma_db/
+uploads/
+*.session
+.DS_Store
+*.pid
+*.seed
+*.pid.lock
+.wwebjs_cache/
+.wwebjs_auth/
+

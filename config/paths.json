@@ -1,0 +1,34 @@
+{
+  "nodejs": {
+    "path": "C:\\Program Files\\nodejs\\node.exe",
+    "npm": "C:\\Program Files\\nodejs\\npm.cmd"
+  },
+  "python": {
+    "path": "%APPDATA%\\Python\\Python313\\python.exe",
+    "scripts": "%APPDATA%\\Python\\Python313\\Scripts"
+  },
+  "chromadb": {
+    "command": "chroma",
+    "host": "localhost",
+    "port": 8000,
+    "path": "./backend/chroma_db"
+  },
+  "ollama": {
+    "url": "http://localhost:11434",
+    "checkEndpoint": "/api/tags"
+  },
+  "mariadb": {
+    "host": "localhost",
+    "port": 3306,
+    "checkCommand": "mysqladmin ping -h localhost"
+  },
+  "backend": {
+    "port": 3301,
+    "envFile": "./backend/.env"
+  },
+  "frontend": {
+    "port": 3300,
+    "envFile": "./frontend/.env"
+  }
+}
+

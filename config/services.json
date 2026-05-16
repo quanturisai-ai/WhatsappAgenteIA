@@ -1,0 +1,44 @@
+{
+  "services": [
+    {
+      "name": "MariaDB",
+      "type": "windows-service",
+      "serviceName": "MariaDB",
+      "port": 3306,
+      "required": true
+    },
+    {
+      "name": "Ollama",
+      "type": "process",
+      "checkUrl": "http://localhost:11434/api/tags",
+      "port": 11434,
+      "required": true
+    },
+    {
+      "name": "ChromaDB",
+      "type": "managed",
+      "managedBy": "backend",
+      "port": 8000,
+      "required": true
+    },
+    {
+      "name": "Backend",
+      "type": "node",
+      "directory": "./backend",
+      "command": "npm run dev",
+      "port": 3301,
+      "required": true,
+      "logFile": "./logs/backend.log"
+    },
+    {
+      "name": "Frontend",
+      "type": "node",
+      "directory": "./frontend",
+      "command": "npm run dev",
+      "port": 3300,
+      "required": true,
+      "logFile": "./logs/frontend.log"
+    }
+  ]
+}
+
