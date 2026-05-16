@@ -1,0 +1,587 @@
+openapi: 3.0.3
+info:
+  title: WhatsappAgenteIA — Agente Zap API
+  description: |
+    API REST do sistema de atendimento WhatsApp com IA local (Ollama + ChromaDB).
+    Gerado pelo Writer (Reversa) em 2026-05-16.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3000/api
+    description: Desenvolvimento local
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AuthResponse:
+      type: object
+      properties:
+        message: { type: string }
+        user: { $ref: '#/components/schemas/User' }
+        token: { type: string }
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        contact_number: { type: string }
+        contact_name: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [new, in_progress, paused, finished]
+        auto_responding: { type: boolean }
+        needs_intervention: { type: boolean }
+        last_message_at: { type: string, format: date-time, nullable: true }
+
+    Message:
+      type: object
+      properties:
+        id: { type: integer }
+        conversation_id: { type: integer }
+        content: { type: string }
+        direction:
+          type: string
+          enum: [incoming, outgoing]
+        is_from_ai: { type: boolean }
+        received_at: { type: string, format: date-time, nullable: true }
+
+    WhatsAppStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [disconnected, connecting, authenticated, connected, connection_failed]
+
+    Document:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        filename: { type: string }
+        original_name: { type: string }
+        file_type: { type: string }
+        file_size: { type: integer }
+        is_indexed: { type: boolean }
+        indexed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    AgentConfig:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        business_name: { type: string, nullable: true }
+        business_info: { type: string, nullable: true }
+        services: { type: string, nullable: true }
+        hours: { type: string, nullable: true }
+        personality: { type: string, nullable: true }
+        greeting_message: { type: string, nullable: true }
+        farewell_message: { type: string, nullable: true }
+        absence_message: { type: string, nullable: true }
+        specific_instructions: { type: string, nullable: true }
+        embedding_model: { type: string, default: deepseek-r1 }
+        generation_model: { type: string, default: deepseek-r1 }
+        temperature: { type: number, default: 0.7 }
+        top_p: { type: number, default: 0.9 }
+        top_k: { type: integer, default: 40 }
+        repeat_penalty: { type: number, default: 1.1 }
+        max_age_hours: { type: integer, default: 12 }
+
+    Media:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        filename: { type: string }
+        original_name: { type: string }
+        file_type:
+          type: string
+          enum: [video, image, document, audio]
+        source:
+          type: string
+          enum: [outgoing, incoming]
+        mandatory_send: { type: boolean }
+        is_active: { type: boolean }
+        indexing_status:
+          type: string
+          enum: [pending, indexed, failed, not_applicable]
+
+    Topic:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        trigger_keywords:
+          type: array
+          items: { type: string }
+        context:
+          type: string
+          enum: [greeting, farewell, absence, special_date, custom]
+        priority: { type: integer, minimum: 0, maximum: 100 }
+        is_active: { type: boolean }
+        indexing_status:
+          type: string
+          enum: [pending, indexed, failed, not_applicable]
+
+    HumanAttendant:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        phone_number: { type: string }
+        name: { type: string, nullable: true }
+        is_active: { type: boolean }
+
+    SaldoFidelidade:
+      type: object
+      properties:
+        atual: { type: integer }
+        proximoObjetivo: { type: integer }
+        faltam: { type: integer }
+        proximoPremio: { type: string }
+        conquistas: { type: integer }
+
+    FidelizacaoRegra:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        tipo_gatilho_id: { type: integer }
+        ativa: { type: boolean }
+        vigencia_inicio: { type: string, format: date-time, nullable: true }
+        vigencia_fim: { type: string, format: date-time, nullable: true }
+        intervalo_verificacao_automacoes: { type: integer, description: Horas }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── AUTENTICAÇÃO ──────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      summary: Registrar novo usuário
+      security: []
+      tags: [Autenticação]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6 }
+      responses:
+        '201':
+          description: Usuário criado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { description: Campos inválidos }
+
+  /auth/login:
+    post:
+      summary: Autenticar usuário
+      security: []
+      tags: [Autenticação]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login realizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401': { description: Credenciais inválidas }
+
+  /auth/profile:
+    get:
+      summary: Perfil do usuário autenticado
+      tags: [Autenticação]
+      responses:
+        '200':
+          description: Dados do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+
+  # ── WHATSAPP ──────────────────────────────────────────────────────────────
+  /whatsapp/initialize:
+    post:
+      summary: Inicializar sessão WhatsApp
+      tags: [WhatsApp]
+      responses:
+        '200': { description: Sessão inicializada }
+
+  /whatsapp/status:
+    get:
+      summary: Status da sessão WhatsApp
+      tags: [WhatsApp]
+      responses:
+        '200':
+          description: Status atual
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhatsAppStatus' }
+
+  /whatsapp/qr:
+    get:
+      summary: QR code para autenticação
+      tags: [WhatsApp]
+      responses:
+        '200':
+          description: QR code (null se expirado ou já conectado)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qrCode: { type: string, nullable: true }
+
+  /whatsapp/send:
+    post:
+      summary: Enviar mensagem de texto
+      tags: [WhatsApp]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, message]
+              properties:
+                number: { type: string, example: '5511999999999' }
+                message: { type: string }
+      responses:
+        '200': { description: Mensagem enviada }
+
+  /whatsapp/disconnect:
+    post:
+      summary: Desconectar sessão (leve)
+      tags: [WhatsApp]
+      responses:
+        '200': { description: Sessão desconectada }
+
+  /whatsapp/logout:
+    post:
+      summary: Logout completo (destrói sessão e arquivos)
+      tags: [WhatsApp]
+      responses:
+        '200': { description: Logout realizado }
+
+  # ── CONVERSAS ────────────────────────────────────────────────────────────
+  /conversations:
+    get:
+      summary: Listar conversas
+      tags: [Conversa]
+      responses:
+        '200':
+          description: Lista de conversas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Conversation' }
+    post:
+      summary: Criar conversa manualmente
+      tags: [Conversa]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact_number]
+              properties:
+                contact_number: { type: string }
+                contact_name: { type: string }
+      responses:
+        '201': { description: Conversa criada }
+
+  /conversations/{id}:
+    get:
+      summary: Buscar conversa com mensagens
+      tags: [Conversa]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Conversa com histórico }
+        '404': { description: Não encontrada }
+
+  /conversations/{id}/pause:
+    post:
+      summary: Pausar auto-responding
+      tags: [Conversa]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: IA pausada }
+
+  /conversations/{id}/resume:
+    post:
+      summary: Retomar auto-responding
+      tags: [Conversa]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: IA retomada }
+
+  /conversations/{id}/takeover:
+    post:
+      summary: Assumir conversa (takeover humano)
+      tags: [Conversa]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Conversa assumida }
+
+  /conversations/{id}/finish:
+    post:
+      summary: Finalizar conversa
+      tags: [Conversa]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Conversa finalizada }
+
+  /conversations/pause-all:
+    post:
+      summary: Pausar todas as conversas
+      tags: [Conversa]
+      responses:
+        '200': { description: Todas pausadas }
+
+  /conversations/resume-all:
+    post:
+      summary: Retomar todas as conversas
+      tags: [Conversa]
+      responses:
+        '200': { description: Todas retomadas }
+
+  /conversations/send:
+    post:
+      summary: Enviar mensagem manualmente
+      tags: [Conversa]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversationId, content]
+              properties:
+                conversationId: { type: integer }
+                content: { type: string }
+      responses:
+        '200': { description: Mensagem enviada }
+
+  # ── DOCUMENTOS ───────────────────────────────────────────────────────────
+  /documents/upload:
+    post:
+      summary: Upload de documento
+      tags: [Documento]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Documento criado }
+
+  /documents/list:
+    get:
+      summary: Listar documentos
+      tags: [Documento]
+      responses:
+        '200':
+          description: Lista de documentos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Document' }
+
+  /documents/{id}:
+    delete:
+      summary: Remover documento
+      tags: [Documento]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Removido }
+
+  # ── CONFIGURAÇÃO DO AGENTE ───────────────────────────────────────────────
+  /agent-config:
+    get:
+      summary: Ler configuração do agente
+      tags: [Configuração do Agente]
+      responses:
+        '200':
+          description: Configuração atual
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfig' }
+    put:
+      summary: Atualizar configuração do agente
+      tags: [Configuração do Agente]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentConfig' }
+      responses:
+        '200': { description: Configuração atualizada }
+
+  # ── OLLAMA ───────────────────────────────────────────────────────────────
+  /ollama/models:
+    get:
+      summary: Listar modelos Ollama
+      security: []
+      tags: [Ollama]
+      responses:
+        '200':
+          description: Modelos disponíveis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items: { type: string }
+
+  /ollama/health:
+    get:
+      summary: Verificar saúde do Ollama
+      security: []
+      tags: [Ollama]
+      responses:
+        '200': { description: Ollama acessível }
+        '503': { description: Ollama inacessível }
+
+  # ── INDEXAÇÃO ────────────────────────────────────────────────────────────
+  /indexing/list:
+    get:
+      summary: Listar conteúdo indexável
+      tags: [Indexação]
+      responses:
+        '200': { description: Lista com status de indexação }
+
+  /indexing/status:
+    get:
+      summary: Status de indexação
+      tags: [Indexação]
+      responses:
+        '200': { description: Resumo do estado }
+
+  /indexing/start:
+    post:
+      summary: Iniciar indexação em lote
+      tags: [Indexação]
+      responses:
+        '200': { description: Indexação iniciada }
+
+  /indexing/{type}/{id}:
+    post:
+      summary: Indexar item específico
+      tags: [Indexação]
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [document, topic, media]
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Item indexado }
+
+  # ── FIDELIZAÇÃO (resumo) ─────────────────────────────────────────────────
+  /fidelizacao/clientes/{cpf}:
+    get:
+      summary: Saldo de fidelidade por CPF
+      tags: [Fidelização]
+      parameters:
+        - in: path
+          name: cpf
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saldo de fidelidade
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaldoFidelidade' }
+
+  /fidelizacao/automacoes/regras:
+    get:
+      summary: Listar automações
+      tags: [Fidelização]
+      responses:
+        '200':
+          description: Lista de regras
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FidelizacaoRegra' }
+    post:
+      summary: Criar automação
+      tags: [Fidelização]
+      responses:
+        '201': { description: Automação criada }

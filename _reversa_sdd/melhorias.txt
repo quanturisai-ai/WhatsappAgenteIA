@@ -1,0 +1,1042 @@
+Detalhes importantes: Esse sistema deve permitir o cadastramento de contas onde cada uma tem seu proprio numero de whatsapp, seus proprios clientes, proprios pedidos, nada é compartilhado. cada conta funciona de forma independente. precisamos garantir que na se misture.
+
+Banco: postgress + pgvector + pgbounce
+
+Whatsap: Go + Whatsmeow
+
+Sem ollama: Vamos migrar tudo para API KEY da openrouter. precisamos melhorar e modernizar com o que existe de mais moderno para conversas com agentes de IA tanto do ponto de vista de assertividade das respostas,conversas mais inteligentes, qualidade total com extrema economia de tokens, precisdamos mudar e modernizar como a LLM aciona as ferramentas, vamos trocar para MCP, vamos melhorar a forma de interação com ferramentas de forma mais inteligente e efetiva. Precisanmos do estado da arte em conversas e atendimento a clientes. Quero que identifique as lacunas do sistemas que precisamos ajustar para cobrir toda jornada de atendiemnto ao cliente
+
+Interface: O sistema atual foi desenvolvido aos poucos e não mantem padrao de layout. Precisamos organizar os modulos de forma lógica, reduzindo redundancias, facilitando a navegação e o UX e simplificando a vida do usuaruio, menos cliques, tudo aquilo que não for do dia a dia deve ficar mais reservado para limpar a tela e simplificar a navegação do dia a dia. Aquilo que é mais utilizado fica em evidencia. Faça uma analise critica do UX pois, apesar de tudo funcionar, estou insatisfeito e pode ficar muito melhor.
+
+O sistem design vai mutar para um projeto ui.shadcn.com
+
+Criar um novo plano de implementação fom foco na função goal
+
+Criar sistema inteligente de logs para ser efetivo mas não consumir todo armazenamento do servidor não consumir
+
+Muito impórtante. Esse sistema deve ser extremamente leve para rodar em uma VPS não tao boa e com conexao simultanea de pelo menos 100 clientes no whatsapp de multiplas contas sem misturar as conversas. Faça as alterações necessarias, melhorando as funcionalidades e trazendo novas sugestões. Outro ponto importante é que precisamos implementar isso muito rapido então utilize as melhores tecnicas de engenharia de softaware para fazer tudo do jeito mais rapido e com qualidade.
+
+Abaixo segue a especificações de outro sistema que estamos implementando e que devemos utilizar para modernizar o nosso. 
+
+Uma das coisas mais complicadas desse sistema é a falta de padroniozaçao de tudo, precisamos do estado da arte da padronização desde o banco de dados, do codigo, da documentação, das pastas de tudo. 
+
+Vamos melhorar tudo que esta fora de padrão. 
+
+Precisamos iniciar os serviços de forma profissional.
+
+
+# Especificação Técnica — Economia de Tokens e Sistema WhatsApp
+
+**Projeto de origem:** Quanturis  
+**Data:** 2026-05-16  
+**Propósito:** Documento de referência para replicar as técnicas implementadas em outros projetos.
+
+---
+
+## Índice
+
+1. [Técnicas de Economia de Tokens](#1-técnicas-de-economia-de-tokens)
+   - 1.1 [Cache Semântico de FAQs (Shortcut de 0 tokens)](#11-cache-semântico-de-faqs-shortcut-de-0-tokens)
+   - 1.2 [Detecção Determinística de Intenção de Compra](#12-detecção-determinística-de-intenção-de-compra)
+   - 1.3 [Mascaramento de Observações Antigas no Histórico](#13-mascaramento-de-observações-antigas-no-histórico)
+   - 1.4 [Prefix Cache via Estrutura de System Prompt](#14-prefix-cache-via-estrutura-de-system-prompt)
+   - 1.5 [Contabilização Real de Custo via Provider](#15-contabilização-real-de-custo-via-provider)
+   - 1.6 [Budget por Turno e Budgets por Contexto](#16-budget-por-turno-e-budgets-por-contexto)
+   - 1.7 [Diagnóstico Contínuo de Eficiência de Cache](#17-diagnóstico-contínuo-de-eficiência-de-cache)
+   - 1.8 [Stripping de Blocos de Raciocínio Interno](#18-stripping-de-blocos-de-raciocínio-interno)
+   - 1.9 [Histórico Comprimido com Janela Deslizante](#19-histórico-comprimido-com-janela-deslizante)
+   - 1.10 [Geração de Payment Link Sem Inferência](#110-geração-de-payment-link-sem-inferência)
+   - 1.11 [Roteamento para Modelos Baratos](#111-roteamento-para-modelos-baratos)
+   - 1.12 [Banco de Dados de Custos para Auditoria](#112-banco-de-dados-de-custos-para-auditoria)
+2. [Sistema WhatsApp](#2-sistema-whatsapp)
+   - 2.1 [Stack e Bibliotecas](#21-stack-e-bibliotecas)
+   - 2.2 [Arquitetura de Sessão Dupla (SQLite + PostgreSQL)](#22-arquitetura-de-sessão-dupla-sqlite--postgresql)
+   - 2.3 [Fluxo de Pairing via QR Code](#23-fluxo-de-pairing-via-qr-code)
+   - 2.4 [Reconexão Automática ao Boot](#24-reconexão-automática-ao-boot)
+   - 2.5 [Criptografia do Material de Sessão](#25-criptografia-do-material-de-sessão)
+   - 2.6 [Política de Sincronização Crítica vs Eventual](#26-política-de-sincronização-crítica-vs-eventual)
+   - 2.7 [Graceful Shutdown com Flush Garantido](#27-graceful-shutdown-com-flush-garantido)
+   - 2.8 [Pipeline de Mensagens Inbound](#28-pipeline-de-mensagens-inbound)
+   - 2.9 [Envio de Mensagens com Timeout Seguro](#29-envio-de-mensagens-com-timeout-seguro)
+   - 2.10 [Classificação de Tipos de Mensagem](#210-classificação-de-tipos-de-mensagem)
+   - 2.11 [Download e Persistência de Mídia](#211-download-e-persistência-de-mídia)
+   - 2.12 [Status e Monitoramento de Sessão](#212-status-e-monitoramento-de-sessão)
+   - 2.13 [Separação de Responsabilidades (ADR-002)](#213-separação-de-responsabilidades-adr-002)
+
+---
+
+## 1. Técnicas de Economia de Tokens
+
+### 1.1 Cache Semântico de FAQs (Shortcut de 0 tokens)
+
+**Objetivo:** Responder perguntas frequentes sem acionar nenhum modelo de linguagem.
+
+**Como funciona:**
+
+O sistema mantém um cache Redis de pares pergunta→resposta. Quando uma mensagem chega, ela é normalizada (lowercase, remoção de pontuação, colapso de espaços múltiplos) e um hash Blake2b é calculado. Se o hash bater exatamente com uma entrada no cache, a resposta é retornada diretamente — 0 tokens consumidos.
+
+Para perguntas semanticamente similares mas não idênticas (ex: "qual o preço?" vs "quanto custa?"), o sistema calcula o embedding da pergunta normalizada (usando o mesmo modelo de embedding já em uso para RAG) e compara com embeddings armazenados usando distância de cosseno. Se a similaridade for ≥ 0.85, o cache é considerado hit.
+
+**Fluxo completo:**
+```
+Mensagem recebida
+    ↓
+Normalização (lowercase + strip pontuação)
+    ↓
+Hash Blake2b → lookup Redis O(1)
+    ↓ (miss)
+Embedding da pergunta → busca por similaridade no Redis
+    ↓ (miss com sim < 0.85)
+Segue para o agente LLM normalmente
+    ↓ (hit em qualquer etapa)
+Retorna resposta do cache — 0 tokens, ~2ms latência
+```
+
+**Estrutura no Redis:**
+```
+faq:{tenant_id}:{hash}  →  {question, answer, embedding, hit_count, created_at}  TTL 24h
+```
+
+**Métricas rastreadas:** número de hits, ratio de shortcuts (shortcuts / total_turns), latência comparativa.
+
+**Resultado típico:** Em cenários de vendas de infoprodutos, 30–50% das perguntas se repetem. Essa técnica elimina o custo dessas interações completamente.
+
+---
+
+### 1.2 Detecção Determinística de Intenção de Compra
+
+**Objetivo:** Identificar quando o usuário quer comprar sem gastar tokens em inferência.
+
+**Como funciona:**
+
+Uma lista de termos de intenção de compra é mantida como configuração por tenant (não hardcoded). A mensagem normalizada é verificada contra essa lista antes de ser enviada ao LLM. Se houver match, o sistema injeta diretamente o link de pagamento na resposta, sem acionar o modelo.
+
+**Padrões detectados (exemplos):**
+- Termos diretos: "quero comprar", "vou comprar", "quero adquirir", "como compro"
+- Termos indiretos: "forma de pagamento", "como pago", "aceita pix", "tem parcelamento", "pix"
+- Confirmações: "vou levar", "quero esse", "pode fechar"
+
+**Resultado:** Para a jornada mais crítica do funil (momento de compra), o custo é zero tokens.
+
+---
+
+### 1.3 Mascaramento de Observações Antigas no Histórico
+
+**Objetivo:** Reduzir o contexto enviado ao modelo sem perder informação essencial.
+
+**Como funciona:**
+
+O histórico de conversa armazenado contém turnos completos incluindo blocos XML de raciocínio interno do agente (tags `<observation>`, `<think>`, `<reasoning>`). Quando o histórico é serializado para envio ao LLM, turnos com mais de N mensagens atrás têm seus blocos de observação substituídos por um placeholder compacto.
+
+**Regra de mascaramento:**
+- Últimas K mensagens: enviadas integralmente (contexto recente é importante)
+- Mensagens anteriores a K: observações substituídas por `[observation omitted]`
+- Toolcall results: mantidos integralmente (o modelo precisa do resultado, não do raciocínio)
+
+**Impacto:** Em conversas longas (30+ turnos), essa técnica reduz o contexto enviado em 40–60% sem degradar a qualidade das respostas, pois o modelo precisa das conclusões, não do raciocínio intermediário antigo.
+
+---
+
+### 1.4 Prefix Cache via Estrutura de System Prompt
+
+**Objetivo:** Aproveitar o prefix caching dos providers de LLM para não re-processar o system prompt a cada turno.
+
+**Como funciona:**
+
+O system prompt do agente é estruturado em duas partes:
+
+1. **Prefixo estável (80–90% do prompt):** Instruções do agente, personalidade, regras de vendas, catálogo de produtos, FAQ base, formato de respostas. Esta parte nunca muda entre turnos de uma mesma sessão.
+
+2. **Sufixo variável (10–20%):** Contexto específico do turno atual (dados do lead, estado da conversa, hora atual).
+
+Providers como Anthropic (via header `anthropic-beta: prompt-caching-2024-07-31`) e OpenRouter (via header `X-OpenRouter-Cache: 1` com `usage.include: true` no body) armazenam em cache o prefixo estável após o primeiro turno. Os turnos subsequentes pagam apenas pelos tokens do sufixo variável + resposta.
+
+**Estrutura do system prompt:**
+```
+[PARTE ESTÁVEL — vai para prefix cache]
+<identity>Você é um assistente de vendas especializado em...</identity>
+<knowledge_base>{conteúdo do ebook/produto — enorme}</knowledge_base>
+<faq_base>{perguntas e respostas frequentes}</faq_base>
+<sales_rules>{regras de abordagem e conversão}</sales_rules>
+
+[PARTE VARIÁVEL — não vai para cache]
+<current_context>
+  lead_id: {id}
+  conversation_stage: {etapa}
+  current_time: {timestamp}
+</current_context>
+```
+
+**Resultado:** A partir do 2º turno, o custo do system prompt cai para ~10% (apenas os tokens de sufixo são cobrados integralmente; o prefixo é cobrado a 10% da taxa normal nos providers que suportam o recurso).
+
+**Como verificar se o cache está ativo:** O response body do provider inclui campos como `cache_read_input_tokens` e `cache_creation_input_tokens`. Monitorar esses campos é essencial para confirmar que o prefix cache está funcionando.
+
+---
+
+### 1.5 Contabilização Real de Custo via Provider
+
+**Objetivo:** Medir o custo real de cada turno, não uma estimativa, incluindo descontos de cache.
+
+**Como funciona:**
+
+O custo real é extraído do campo `usage` da resposta da API do provider. Campos relevantes:
+
+- `prompt_tokens` / `completion_tokens` — tokens cobrados normalmente
+- `cache_read_input_tokens` — tokens lidos do prefix cache (cobrado a ~10%)
+- `cache_creation_input_tokens` — tokens que criaram o cache (cobrado a ~125%)
+
+A fórmula de custo real leva em conta os diferentes preços por tipo de token. Se o provider não retornar esses campos (fallback), o sistema estima o custo com base nos tokens totais e preço médio do modelo.
+
+**Por que isso importa:** Uma estimativa simples `total_tokens * preco_por_token` superestima em até 5x o custo real quando prefix cache está ativo, levando a decisões erradas de orçamento e roteamento.
+
+---
+
+### 1.6 Budget por Turno e Budgets por Contexto
+
+**Objetivo:** Impedir que conversas longas ou mal configuradas ultrapassem o custo máximo aceitável.
+
+**Como funciona:**
+
+Dois budgets são configurados por produto/tenant:
+
+1. **Budget por turno:** Custo máximo em USD para um único turno de conversa. Se o custo estimado (pre-chamada, baseado em tokens do contexto) exceder o limite, o sistema rejeita a chamada e retorna uma resposta de fallback ("Desculpe, não consegui processar sua mensagem agora").
+
+2. **Budget por conversa:** Custo acumulado máximo para toda a conversa. Quando atingido, o agente entra em modo simplificado (respostas mais curtas, sem tools) ou encerra a conversa com um CTA de compra.
+
+**Implementação de pré-verificação:**
+```
+custo_estimado = (tokens_contexto * preco_input) + (max_tokens_resposta * preco_output)
+if custo_estimado > budget_por_turno:
+    return fallback_response
+```
+
+---
+
+### 1.7 Diagnóstico Contínuo de Eficiência de Cache
+
+**Objetivo:** Medir em produção se as técnicas de economia estão funcionando e quantificar o impacto.
+
+**Como funciona:**
+
+Um buffer rolling dos últimos N turnos é mantido no Redis (TTL 7 dias). Cada entrada registra:
+- `input_tokens`, `output_tokens`, `cached_tokens`, `cost_usd`
+- `is_faq_shortcut` (booleano — foi respondido sem LLM?)
+- `is_purchase_shortcut` (booleano — foi respondido via link direto?)
+- `cache_hit_ratio` por turno
+- `latency_ms`
+
+Endpoints de diagnóstico expõem:
+- **Cache hit ratio** (média e percentil 95 nos últimos N turnos)
+- **Shortcut ratio** (% de turnos respondidos sem LLM)
+- **Custo médio por turno** (real vs estimado)
+- **Latência p50/p90/p99**
+- **Saving estimado** (custo que teria sido gasto sem as otimizações)
+
+Esses dados são persistidos em Postgres para análise histórica e para cobrança (o custo real de tokens é repassado ao tenant via modelo de negócio).
+
+---
+
+### 1.8 Stripping de Blocos de Raciocínio Interno
+
+**Objetivo:** Não armazenar nem reenviar ao LLM o raciocínio interno de modelos de raciocínio (ex: DeepSeek-Reasoner, Claude thinking).
+
+**Como funciona:**
+
+Modelos de raciocínio retornam blocos especiais com o processo de pensamento interno (geralmente em tags `<think>...</think>` ou como campo separado `thinking`). Esses blocos:
+
+1. São removidos **antes de salvar no histórico** — o histórico armazena apenas a resposta final
+2. São removidos **antes de reenviar o histórico ao modelo** — o modelo não precisa ver seu próprio raciocínio anterior
+3. São logados separadamente para debugging (não persistidos por padrão)
+
+**Por que é importante:** Um bloco `<think>` de um modelo de raciocínio pode conter 500–2000 tokens. Em uma conversa de 20 turnos, sem stripping, isso seria 10.000–40.000 tokens extras enviados a cada novo turno — multiplicando o custo exponencialmente.
+
+---
+
+### 1.9 Histórico Comprimido com Janela Deslizante
+
+**Objetivo:** Limitar o crescimento do contexto em conversas longas.
+
+**Como funciona:**
+
+O histórico completo é armazenado no Redis, mas ao serializar para envio ao LLM, uma janela deslizante é aplicada:
+
+- **Janela principal:** Últimas K mensagens (ex: últimas 10) — enviadas integralmente
+- **Resumo comprimido (opcional):** Para conversas muito longas, as mensagens fora da janela são substituídas por um resumo gerado pelo LLM em um turno separado e mais barato
+
+A janela é configurável por tenant e por tipo de conversa (uma conversa de suporte pode precisar de janela maior que uma de vendas simples).
+
+---
+
+### 1.10 Geração de Payment Link Sem Inferência
+
+**Objetivo:** Gerar links de pagamento personalizados sem chamar o LLM.
+
+**Como funciona:**
+
+Quando o sistema detecta intenção de compra (técnica 1.2) ou quando a ferramenta de oferta de compra é acionada pelo agente, o link de pagamento é construído deterministicamente:
+
+```
+base_url + "?product_id={id}&tenant_id={tenant}&lead_id={lead}&utm_source=wa"
+```
+
+Nenhuma inferência é necessária para gerar o link. O agente LLM aciona a tool `offer_purchase_link()`, que retorna o link pré-construído. O agente então apenas formata a mensagem de apresentação do link (esse turno é mais barato por ser curto).
+
+---
+
+### 1.11 Roteamento para Modelos Baratos
+
+**Objetivo:** Usar o modelo mais barato que seja suficiente para cada tipo de tarefa.
+
+**Como funciona:**
+
+Diferentes partes do pipeline usam modelos diferentes:
+
+- **Embeddings:** `text-embedding-3-small` (4–10x mais barato que large, qualidade suficiente para RAG de produto)
+- **Classificação de intenção (fallback):** Modelo pequeno (ex: Haiku, Flash) para tarefas de classificação simples
+- **Agente de vendas principal:** Modelo médio a grande (ex: Sonnet, GPT-4o-mini) — qualidade importa aqui
+- **Análise de lead em background:** Modelo pequeno (a análise não precisa ser em tempo real)
+- **Resumo de histórico:** Modelo pequeno (tarefa mecânica)
+
+O roteamento é configurável por tenant, permitindo que tenants premium usem modelos melhores enquanto tenants básicos usam modelos econômicos.
+
+---
+
+### 1.12 Banco de Dados de Custos para Auditoria
+
+**Objetivo:** Registrar o custo real de tokens de cada conversa para auditoria e cobrança.
+
+**Como funciona:**
+
+Cada turno de conversa registra em uma tabela de auditoria:
+- `input_tokens`, `output_tokens`, `cached_tokens`
+- `cost_usd` (custo real calculado)
+- `model_used`
+- `is_shortcut` (se foi respondido sem LLM)
+- `conversation_id`, `tenant_id`, `turn_number`
+
+Isso permite:
+1. **Cobrança por uso real** — tenants pagam pelo que consomem
+2. **Auditoria de anomalias** — detectar conversas com custo anormal
+3. **Otimização contínua** — identificar produtos/tenants onde o cache não está funcionando bem
+4. **P&L por tenant** — calcular margem real por cliente
+
+---
+
+## 2. Sistema WhatsApp
+
+### 2.1 Stack e Bibliotecas
+
+**Linguagem:** Go 1.24+
+
+**Biblioteca principal:**
+```
+go.mau.fi/whatsmeow v0.0.0-20260513140310-c551a4055c0f
+```
+Whatsmeow é uma implementação em Go do protocolo WhatsApp Web Multi-Device. É a biblioteca mais completa e atualizada para integração direta com WhatsApp sem intermediários (sem API oficial do Meta para conversas iniciadas pelo usuário).
+
+**Dependências críticas:**
+
+| Biblioteca | Versão | Uso |
+|-----------|--------|-----|
+| `go.mau.fi/whatsmeow` | ~2026 | Protocolo WA Multi-Device (Signal) |
+| `github.com/jackc/pgx/v5` | v5.7.6 | PostgreSQL (fonte de verdade de sessões) |
+| `github.com/mattn/go-sqlite3` | v1.14.42 | SQLite local (cache de sessão por pod) |
+| `github.com/rabbitmq/amqp091-go` | v1.10.0 | Publicação de mensagens inbound no broker |
+| `github.com/skip2/go-qrcode` | v0.0.0-2020 | Geração de QR Code PNG para pairing |
+| `go.uber.org/zap` | v1.27.0 | Logging estruturado |
+| `github.com/refraction-networking/utls` | v1.8.2 | TLS fingerprinting (MTLS com servidores WA) |
+
+**`go.mod` de referência:**
+```go
+module github.com/quanturis/whatsapp-gateway
+
+go 1.24
+
+require (
+    go.mau.fi/whatsmeow v0.0.0-20260513140310-c551a4055c0f
+    github.com/jackc/pgx/v5 v5.7.6
+    github.com/mattn/go-sqlite3 v1.14.42
+    github.com/rabbitmq/amqp091-go v1.10.0
+    github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+    go.uber.org/zap v1.27.0
+)
+```
+
+---
+
+### 2.2 Arquitetura de Sessão Dupla (SQLite + PostgreSQL)
+
+**Problema resolvido:** O Whatsmeow precisa de persistência de sessão para reconectar sem novo pairing. Mas um sistema multi-tenant com múltiplas organizações precisa de uma fonte de verdade centralizada. A solução é usar dois níveis de armazenamento.
+
+**Arquitetura:**
+
+```
+┌─────────────────────────────────────────┐
+│           Gateway Pod (Go)              │
+│                                         │
+│  ┌──────────┐    ┌──────────────────┐   │
+│  │Whatsmeow │    │   Registry       │   │
+│  │  Client  │◄───│  (RWMutex map)   │   │
+│  └────┬─────┘    └──────────────────┘   │
+│       │                                 │
+│  ┌────▼─────────────────────────────┐   │
+│  │  SQLite WAL (cache local/pod)    │   │
+│  │  /data/wa-sessions/{org_id}.db   │   │
+│  │  Criado por sqlstore.New()        │   │
+│  └────┬─────────────────────────────┘   │
+│       │ SyncCritical / SyncEventual     │
+└───────┼─────────────────────────────────┘
+        │
+   ┌────▼──────────────────────────────┐
+   │  PostgreSQL — Fonte de Verdade    │
+   │  Tabela: wa_sessions              │
+   │  - organizationId (PK)            │
+   │  - encrypted_blob (AES-256-GCM)   │
+   │  - jid, status, last_sync_at      │
+   └───────────────────────────────────┘
+```
+
+**Como funciona:**
+
+1. O Whatsmeow usa o SQLite local como seu armazenamento de sessão (interface nativa da lib)
+2. Após operações críticas, o blob SQLite é criptografado e sincronizado para o Postgres
+3. No boot, o gateway carrega do Postgres, descriptografa e inicializa o SQLite local
+4. O SQLite é `WAL mode` (Write-Ahead Logging) para performance e segurança
+
+**Abrindo o SQLite com WAL:**
+```go
+// internal/store/sqlite.go
+func OpenSQLiteContainer(path string, log waLog.Logger) (*sqlstore.Container, error) {
+    dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on", path)
+    return sqlstore.New(context.Background(), "sqlite3", dsn, log)
+}
+```
+
+---
+
+### 2.3 Fluxo de Pairing via QR Code
+
+**Objetivo:** Vincular um número WhatsApp a uma organização sem intervenção manual no servidor.
+
+**Fluxo completo:**
+
+```
+Cliente chama GET /api/channels/{orgId}/qr
+         ↓
+Gateway abre SQLite para a org (ou cria novo)
+         ↓
+Whatsmeow: client.Connect() → GetQRChannel(ctx com timeout 14min)
+         ↓
+Loop: recebe QR string do canal
+         ↓
+Encode QR string → PNG bytes (go-qrcode)
+         ↓
+Retorna PNG como resposta HTTP (Content-Type: image/png)
+         ↓
+Goroutine em background drena o restante do qrChan até fechar
+         ↓
+Usuário escaneia QR no celular → WA autentica
+         ↓
+Whatsmeow dispara evento Connected
+         ↓
+Handler: upsert Postgres (status=CONNECTED, jid=..., last_connected_at=...)
+         ↓
+SyncCritical (salva sessão criptografada no Postgres)
+```
+
+**Código da geração do QR:**
+```go
+// internal/wamanager/registry.go
+func (r *Registry) QRPNG(ctx context.Context, orgID string) ([]byte, error) {
+    container, err := store.OpenSQLiteContainer(
+        fmt.Sprintf("/data/wa-sessions/%s.db", orgID), r.log,
+    )
+    if err != nil {
+        return nil, err
+    }
+
+    deviceStore, err := container.GetFirstDevice(ctx)
+    if err != nil || deviceStore == nil {
+        deviceStore, err = container.NewDevice()
+        if err != nil {
+            return nil, err
+        }
+    }
+
+    cli := whatsmeow.NewClient(deviceStore, r.log)
+    qrChan, err := cli.GetQRChannel(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    if err := cli.Connect(); err != nil {
+        return nil, err
+    }
+
+    // Timeout de 14 minutos (QR WA expira em ~20s, mas o canal fica aberto para rotação)
+    qrCtx, cancel := context.WithTimeout(ctx, 14*time.Minute)
+    defer cancel()
+
+    var firstQR whatsmeow.QRChannelItem
+    select {
+    case firstQR = <-qrChan:
+    case <-qrCtx.Done():
+        return nil, fmt.Errorf("QR timeout")
+    }
+
+    // Encode para PNG
+    png, err := qrcode.Encode(firstQR.Code, qrcode.Medium, 256)
+    if err != nil {
+        return nil, err
+    }
+
+    // Drena o restante em background para não bloquear o canal
+    go func() {
+        for range qrChan {
+        }
+    }()
+
+    r.trackClient(orgID, cli)
+    r.attachHandlers(orgID, cli)
+    return png, nil
+}
+```
+
+**Pontos críticos:**
+- O QR WA expira a cada ~20 segundos; o Whatsmeow rotaciona automaticamente os QRs pelo canal
+- O timeout de 14 minutos no `GetQRChannel` significa que o usuário tem 14 min para escanear
+- O primeiro QR é o que importa para renderizar; os subsequentes são para o usuário tentar novamente
+- `trackClient` armazena o cliente no `map[orgID]*whatsmeow.Client` protegido por RWMutex
+
+---
+
+### 2.4 Reconexão Automática ao Boot
+
+**Objetivo:** Ao reiniciar o gateway, reconectar automaticamente todos os números que estavam conectados.
+
+**Fluxo:**
+
+```go
+// cmd/gateway/main.go — chamado no boot
+func ReconnectPersisted(ctx context.Context) {
+    orgs, err := store.ListReconnectOrgs(ctx) // busca orgs com status='CONNECTED' no Postgres
+    if err != nil {
+        log.Error("failed to list orgs for reconnect", zap.Error(err))
+        return
+    }
+
+    for _, orgID := range orgs {
+        go func(id string) {
+            reconnectCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+            defer cancel()
+
+            // Carrega SQLite local (já descriptografado do Postgres)
+            container, err := store.OpenSQLiteContainer(
+                fmt.Sprintf("/data/wa-sessions/%s.db", id), log,
+            )
+            if err != nil {
+                log.Error("failed to open sqlite for reconnect", zap.String("org", id), zap.Error(err))
+                return
+            }
+
+            deviceStore, err := container.GetFirstDevice(reconnectCtx)
+            if err != nil || deviceStore == nil {
+                log.Warn("no device found for reconnect", zap.String("org", id))
+                return
+            }
+
+            cli := whatsmeow.NewClient(deviceStore, log)
+            if err := cli.Connect(); err != nil {
+                log.Error("reconnect failed", zap.String("org", id), zap.Error(err))
+                return
+            }
+
+            registry.trackClient(id, cli)
+            registry.attachHandlers(id, cli)
+            log.Info("reconnected", zap.String("org", id))
+        }(orgID)
+    }
+}
+```
+
+**Query que lista orgs para reconexão:**
+```sql
+-- Usa service account com permissão apenas de leitura na tabela wa_sessions
+SELECT organization_id FROM wa_sessions WHERE status = 'CONNECTED';
+```
+
+---
+
+### 2.5 Criptografia do Material de Sessão
+
+**Objetivo:** O material criptográfico do protocolo Signal/WhatsApp (chaves privadas, pre-keys) não pode ser armazenado em texto claro.
+
+**Material de sessão Whatsmeow (o que precisa ser protegido):**
+
+| Campo | O que é |
+|-------|---------|
+| `identity_key_pair` | Par de chaves Curve25519 (identidade do dispositivo) |
+| `signed_prekey` | Pre-key assinada pela identity key |
+| `one_time_prekeys` | Lote de OTPs para estabelecer sessões E2E |
+| `adv_secret_key` | Chave para Advanced Multi-Device |
+| `device_id` | Identificador único do dispositivo |
+| `registration_id` | ID de registro no servidor WA |
+| `noise_key` | Chave de handshake Noise Protocol |
+| `app_state_sync_keys` | Chaves para sincronização de estado do app |
+
+**Como é criptografado:**
+
+O conteúdo completo do arquivo SQLite (ou um blob serializado dos campos críticos) é criptografado com **AES-256-GCM** usando uma chave gerenciada por KMS antes de persistir no Postgres.
+
+```
+SQLite blob
+    ↓
+kms.EncryptSessionBlob(blob, orgID)  →  AES-256-GCM + nonce + tag
+    ↓
+Postgres: encrypted_blob (bytea) + kms_key_id
+```
+
+**Descriptografia no boot:**
+```
+Postgres: encrypted_blob + kms_key_id
+    ↓
+kms.DecryptSessionBlob(encrypted_blob, kms_key_id)  →  SQLite blob
+    ↓
+Escreve em /data/wa-sessions/{orgID}.db
+    ↓
+Whatsmeow abre normalmente o SQLite
+```
+
+**Regra crítica:** Campos `*_enc` nunca são expostos via HTTP. A descriptografia só acontece no processo Go interno do gateway.
+
+---
+
+### 2.6 Política de Sincronização Crítica vs Eventual
+
+**Objetivo:** Balancear durabilidade e performance — operações críticas têm garantia de persistência, operações de baixo risco são assíncronas.
+
+**Três modos de sincronização:**
+
+**SyncCritical** — Para operações que, se perdidas, exigem novo pairing:
+- Após pairing (login novo)
+- Rotação de `signed_prekey`
+- Reabastecimento de `one_time_prekeys` (quando lote cai abaixo do limiar)
+
+```go
+// internal/store/sync.go
+func (s *Store) SyncCritical(ctx context.Context, orgID string) error {
+    backoffs := []time.Duration{100 * time.Millisecond, 300 * time.Millisecond}
+    var lastErr error
+    for attempt := 0; attempt <= len(backoffs); attempt++ {
+        if attempt > 0 {
+            time.Sleep(backoffs[attempt-1])
+        }
+        if err := s.syncToPostgres(ctx, orgID); err != nil {
+            lastErr = err
+            continue
+        }
+        return nil
+    }
+    log.Error("sync_critical exhausted retries",
+        zap.String("org_id", orgID), zap.Error(lastErr))
+    return fmt.Errorf("sync_critical exhausted retries: %w", lastErr)
+}
+```
+
+**SyncEventual** — Para operações tolerantes a até 30s de lag:
+- Patches de `app_state_sync_keys` (sincronização de estado do app)
+- Atualização de metadados de sessão não-críticos
+
+```go
+func (s *Store) SyncEventual(ctx context.Context, orgID string) {
+    go func() {
+        if err := s.syncToPostgres(ctx, orgID); err != nil {
+            log.Warn("sync_eventual failed", zap.String("org_id", orgID), zap.Error(err))
+        }
+    }()
+}
+```
+
+**SyncOnShutdown** — Flush final antes de encerrar o processo:
+
+```go
+func (s *Store) SyncOnShutdown(orgID string) {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    if err := s.SyncCritical(ctx, orgID); err != nil {
+        log.Error("sync_on_shutdown failed", zap.String("org_id", orgID), zap.Error(err))
+    }
+}
+```
+
+---
+
+### 2.7 Graceful Shutdown com Flush Garantido
+
+**Objetivo:** Ao receber SIGTERM, garantir que todas as sessões sejam sincronizadas antes do processo morrer.
+
+**Sequência de shutdown:**
+
+```
+SIGTERM recebido
+    ↓
+HTTP server: ShutdownWithTimeout(15s)  — para de aceitar novas requests
+    ↓
+RabbitMQ consumer: cancelado via context
+    ↓
+Registry.Shutdown(22s total):
+    ├── Para cada cliente ativo:
+    │   ├── SyncOnShutdown(10s hard cap por org)
+    │   └── cli.Disconnect()
+    └── Limpa clients map
+    ↓
+Processo encerra
+```
+
+**Código do Registry.Shutdown:**
+```go
+func (r *Registry) Shutdown(ctx context.Context) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+
+    shutdownCtx, cancel := context.WithTimeout(ctx, 22*time.Second)
+    defer cancel()
+
+    for orgID, cli := range r.clients {
+        r.store.SyncOnShutdown(orgID)  // SyncCritical com 10s timeout
+        cli.Disconnect()
+        log.Info("disconnected on shutdown", zap.String("org_id", orgID))
+    }
+    r.clients = make(map[string]*whatsmeow.Client)
+}
+```
+
+**Por que 22s:** O Kubernetes/Docker Compose tem `terminationGracePeriodSeconds` configurado em 30s. O gateway usa 22s para ter margem antes do SIGKILL forçado.
+
+---
+
+### 2.8 Pipeline de Mensagens Inbound
+
+**Objetivo:** Processar mensagens recebidas de forma confiável e publicar no broker para os agentes de IA consumirem.
+
+**Fluxo completo:**
+
+```
+Whatsmeow dispara evento *events.Message
+    ↓
+attachHandlers() → handleInboundMessage()
+    ↓
+Filtros:
+  - !IsFromMe (ignorar mensagens enviadas pelo próprio número)
+  - !IsGroup (ignorar grupos)
+  - Validar servidor (DefaultUserServer|LegacyUserServer|HiddenUserServer)
+    ↓
+classifyInbound(msg) → (msgType, body, ok)
+    ↓
+Se mídia (image|video|audio|document):
+    downloadAndStoreMedia() → /data/media/{orgID}/{safe_id}.{ext}
+    ↓
+PersistInbound(Postgres) — com dedup por message_id (ON CONFLICT DO NOTHING)
+    ↓
+Publicar no RabbitMQ (exchange: wa.inbound, routing_key: {orgID})
+    ↓
+AI Service consome e processa
+```
+
+**Handler de eventos:**
+```go
+// internal/wamanager/registry.go
+func (r *Registry) attachHandlers(orgID string, cli *whatsmeow.Client) {
+    cli.AddEventHandler(func(evt interface{}) {
+        switch v := evt.(type) {
+        case *events.Connected:
+            r.store.UpsertSession(context.Background(), orgID, SessionMetaUpdate{
+                Status: "CONNECTED",
+                JID:    cli.Store.ID.String(),
+            })
+            r.store.SyncCritical(context.Background(), orgID)
+            r.fireWebhook(orgID, "wa-connected", nil)
+
+        case *events.Disconnected:
+            r.store.UpsertSession(context.Background(), orgID, SessionMetaUpdate{
+                Status: "DISCONNECTED",
+            })
+            r.fireWebhook(orgID, "wa-disconnected", nil)
+
+        case *events.Message:
+            go r.handleInboundMessage(orgID, v)
+        }
+    })
+}
+```
+
+---
+
+### 2.9 Envio de Mensagens com Timeout Seguro
+
+**Objetivo:** Enviar mensagens de texto com timeout explícito para evitar goroutines penduradas.
+
+```go
+// internal/wamanager/send.go
+func (r *Registry) SendText(ctx context.Context, orgID, jid, text string) (string, time.Time, error) {
+    r.mu.RLock()
+    cli, ok := r.clients[orgID]
+    r.mu.RUnlock()
+
+    if !ok {
+        return "", time.Time{}, fmt.Errorf("no client for org %s", orgID)
+    }
+    if !cli.IsConnected() || !cli.IsLoggedIn() {
+        return "", time.Time{}, fmt.Errorf("client not connected for org %s", orgID)
+    }
+
+    recipient, err := types.ParseJID(jid)
+    if err != nil {
+        return "", time.Time{}, fmt.Errorf("invalid JID: %w", err)
+    }
+
+    sendCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
+    defer cancel()
+
+    msg := &waE2E.Message{
+        Conversation: proto.String(text),
+    }
+
+    resp, err := cli.SendMessage(sendCtx, recipient, msg)
+    if err != nil {
+        return "", time.Time{}, err
+    }
+
+    return resp.ID, resp.Timestamp, nil
+}
+```
+
+**Por que 55s:** O timeout do protocolo WA para entrega é ~60s. 55s garante que o gateway tem tempo de detectar timeout antes do contexto pai expirar, permitindo retry ou fallback.
+
+---
+
+### 2.10 Classificação de Tipos de Mensagem
+
+**Objetivo:** Tratar corretamente os diferentes tipos de mensagem que chegam pelo Whatsmeow.
+
+```go
+// internal/wamanager/inbound.go
+type InboundType string
+const (
+    TypeText     InboundType = "text"
+    TypeImage    InboundType = "image"
+    TypeVideo    InboundType = "video"
+    TypeAudio    InboundType = "audio"
+    TypeDocument InboundType = "document"
+)
+
+func classifyInbound(msg *waE2E.Message) (InboundType, string, bool) {
+    switch {
+    case msg.GetConversation() != "":
+        return TypeText, msg.GetConversation(), true
+
+    case msg.GetExtendedTextMessage() != nil:
+        return TypeText, msg.GetExtendedTextMessage().GetText(), true
+
+    case msg.GetImageMessage() != nil:
+        caption := msg.GetImageMessage().GetCaption()
+        return TypeImage, caption, true  // body é a caption; mídia baixada separadamente
+
+    case msg.GetDocumentMessage() != nil:
+        filename := msg.GetDocumentMessage().GetFileName()
+        return TypeDocument, filename, true
+
+    case msg.GetAudioMessage() != nil:
+        return TypeAudio, "", true
+
+    case msg.GetVideoMessage() != nil:
+        caption := msg.GetVideoMessage().GetCaption()
+        return TypeVideo, caption, true
+
+    default:
+        return "", "", false  // tipo não suportado — ignorar
+    }
+}
+```
+
+---
+
+### 2.11 Download e Persistência de Mídia
+
+**Objetivo:** Baixar mídia recebida (imagens, áudios, documentos) e armazenar localmente com nome seguro.
+
+```go
+// internal/wamanager/inbound.go
+func (r *Registry) downloadAndStoreMedia(
+    ctx context.Context,
+    orgID string,
+    msg *waE2E.Message,
+    msgID string,
+) (string, error) {
+    downloadCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+    defer cancel()
+
+    var data []byte
+    var ext string
+    var err error
+
+    switch {
+    case msg.GetImageMessage() != nil:
+        data, err = r.client(orgID).DownloadAny(downloadCtx, msg.GetImageMessage())
+        ext = detectExtension(data, "jpg")  // magic bytes → extensão real
+
+    case msg.GetAudioMessage() != nil:
+        data, err = r.client(orgID).DownloadAny(downloadCtx, msg.GetAudioMessage())
+        ext = detectExtension(data, "ogg")
+
+    case msg.GetDocumentMessage() != nil:
+        data, err = r.client(orgID).DownloadAny(downloadCtx, msg.GetDocumentMessage())
+        ext = detectExtension(data, "bin")
+    }
+
+    if err != nil {
+        return "", fmt.Errorf("download failed: %w", err)
+    }
+
+    // Nome de arquivo seguro (sem path traversal)
+    safeName := safeFilePart(msgID)  // remove caracteres especiais
+    path := fmt.Sprintf("/data/media/%s/%s.%s", orgID, safeName, ext)
+
+    if err := os.WriteFile(path, data, 0644); err != nil {
+        return "", err
+    }
+
+    return path, nil
+}
+
+// Detecção por magic bytes — não confia na extensão declarada pelo cliente
+func detectExtension(data []byte, fallback string) string {
+    if len(data) < 4 {
+        return fallback
+    }
+    switch {
+    case bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}):
+        return "jpg"
+    case bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47}):
+        return "png"
+    case bytes.HasPrefix(data, []byte("OggS")):
+        return "ogg"
+    case bytes.HasPrefix(data, []byte{0x25, 0x50, 0x44, 0x46}):
+        return "pdf"
+    default:
+        return fallback
+    }
+}
+```
+
+---
+
+### 2.12 Status e Monitoramento de Sessão
+
+**Objetivo:** Expor o estado real das conexões WA para o sistema de gestão (dashboard, alertas).
+
+**Fontes de verdade combinadas:**
+
+```go
+// internal/wamanager/registry.go
+type SessionStatus struct {
+    OrgID       string
+    IsConnected bool   // live: cli.IsConnected() && cli.IsLoggedIn()
+    JID         string // JID do número conectado
+    DBStatus    string // Postgres: CONNECTED | DISCONNECTED | BANNED
+}
+
+func (r *Registry) Status(ctx context.Context, orgID string) SessionStatus {
+    r.mu.RLock()
+    cli, ok := r.clients[orgID]
+    r.mu.RUnlock()
+
+    liveConnected := ok && cli.IsConnected() && cli.IsLoggedIn()
+    jid, dbStatus, _ := r.store.GetOperationalStatus(ctx, orgID)
+
+    return SessionStatus{
+        OrgID:       orgID,
+        IsConnected: liveConnected,
+        JID:         jid,
+        DBStatus:    dbStatus,
+    }
+}
+```
+
+**Query Postgres para status:**
+```sql
+SELECT jid, status FROM wa_sessions WHERE organization_id = $1;
+```
+
+**Contagem de sessões conectadas (para métricas/billing):**
+```sql
+SELECT COUNT(*) FROM wa_sessions WHERE status = 'CONNECTED';
+```
+
+---
+
+### 2.13 Separação de Responsabilidades (ADR-002)
+
+**Conceito crítico para não confundir os dois domínios:**
+
+| Aspecto | Session Material (Whatsmeow) | Segurança do Produto |
+|---------|------------------------------|---------------------|
+| **O que é** | Chaves criptográficas do protocolo Signal/WA | Dados de negócio (leads, conversas, tenants) |
+| **Onde fica** | SQLite local + Postgres (encrypted_blob) | Postgres (plaintext com RLS) |
+| **Criptografia** | AES-256-GCM via KMS (obrigatório) | pgcrypto para campos PII sensíveis |
+| **Quem acessa** | Só o processo Go interno do gateway | BFF Node + AI Service via RLS |
+| **O que acontece se vazar** | Conta WA comprometida (sessão pode ser roubada) | Dados de clientes expostos (compliance) |
+| **Reconexão se perder** | Novo pairing (escanear QR novamente) | N/A — dados persistem independente |
+
+**Regra de ouro:** Nunca expor campos `*_enc` ou qualquer dado do `encrypted_blob` via HTTP. A descriptografia é operação interna do gateway apenas.
+
+**Schema da tabela `wa_sessions` (Postgres):**
+```sql
+CREATE TABLE wa_sessions (
+    organization_id  UUID        PRIMARY KEY REFERENCES organizations(id),
+    encrypted_blob   BYTEA,           -- AES-256-GCM do SQLite da sessão
+    kms_key_id       TEXT,            -- qual chave KMS foi usada
+    jid              TEXT,            -- ex: 5511999999999@s.whatsapp.net
+    status           TEXT,            -- CONNECTED | DISCONNECTED | BANNED | PAIRING
+    last_connected_at TIMESTAMPTZ,
+    last_sync_at     TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE wa_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wa_sessions FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY wa_sessions_isolation ON wa_sessions
+    USING (organization_id = current_setting('app.current_tenant')::UUID);
+```
+
+---
+
+## Resumo Executivo
+
+### Economia de Tokens
+
+| Técnica | Redução de Custo Típica |
+|---------|------------------------|
+| FAQ Cache semântico | 30–50% dos turnos = 0 tokens |
+| Detecção determinística de compra | 100% dos turnos de CTA = 0 tokens |
+| Prefix cache system prompt | 80–90% do input_tokens dos turnos não-shortcut |
+| Mascaramento de observações antigas | 40–60% do contexto em conversas longas |
+| Stripping de blocos de raciocínio | Evita crescimento exponencial em modelos de raciocínio |
+| Roteamento para modelos baratos | 3–10x por subtarefa (embeddings, classificação, resumo) |
+
+**Resultado combinado:** Em produção com infoprodutos de alto volume, o custo real por conversa completa é 5–15x menor que uma implementação naive (LLM puro sem otimizações).
+
+### Sistema WhatsApp
+
+| Componente | Decisão |
+|-----------|---------|
+| Protocolo | Whatsmeow (Multi-Device Signal) — sem intermediário |
+| Armazenamento | SQLite WAL local (performance) + Postgres criptografado (durabilidade) |
+| Criptografia | AES-256-GCM via KMS — chaves privadas nunca em texto claro |
+| Pairing | QR PNG por HTTP, timeout 14min, goroutine drena canal |
+| Reconexão | Boot automático para todos os status=CONNECTED do Postgres |
+| Sync | Crítico (3 retries) vs Eventual (fire-and-forget) por tipo de dado |
+| Shutdown | 22s graceful com flush garantido antes de SIGKILL |
+| Inbound | Classify → Download mídia → Persist (dedup) → RabbitMQ → AI |
