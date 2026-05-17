@@ -4,12 +4,20 @@ import { AppError } from '../middleware/errorHandler';
 import { FidelizacaoService } from '../services/fidelizacao.service';
 import { PremioModel, TipoServico } from '../models/premio.model';
 import { PremioClienteModel } from '../models/premioCliente.model';
+import { FidelizacaoNotificacaoModel } from '../models/fidelizacaoNotificacao.model';
+import { FidelizacaoConfigModel } from '../models/fidelizacaoConfig.model';
+import { VmLavClienteModel } from '../models/vmLavCliente.model';
+import { WhatsAppManager } from '../services/whatsapp.manager';
+import { FidelizacaoNotificacaoService } from '../services/fidelizacaoNotificacao.service';
 import pool from '../config/database';
-import logger from '../utils/logger';
 
 const fidelizacaoService = new FidelizacaoService();
 const premioModel = new PremioModel();
 const premioClienteModel = new PremioClienteModel();
+const notificacaoModel = new FidelizacaoNotificacaoModel();
+const configModel = new FidelizacaoConfigModel();
+const clienteModel = new VmLavClienteModel();
+const fidelizacaoNotificacaoService = new FidelizacaoNotificacaoService();
 
 /**
  * Listar prêmios
@@ -44,7 +52,7 @@ export const criarPremio = async (
   try {
     const authReq = req as AuthRequest;
     const userId = authReq.userId!;
-    const { servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, ativo } = req.body;
+    const { servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, valor_voucher, quantidade_utilizacoes, gerar_automatico, entrega_automatico, ativo } = req.body;
 
     if (!servico || !objetivo || !descricao || !data_inicio_utilizacoes) {
       const appError: AppError = new Error('Serviço, objetivo, descrição e data de início são obrigatórios');
@@ -108,6 +116,10 @@ export const criarPremio = async (
       data_fim_utilizacoes: dataFim,
       tipo_atingimento: (tipo_atingimento || 'UNICO') as 'UNICO' | 'PERPETUO',
       validade_dias: validade_dias ? parseInt(String(validade_dias), 10) : null,
+      valor_voucher: valor_voucher != null ? parseFloat(String(valor_voucher)) : null,
+      quantidade_utilizacoes: quantidade_utilizacoes != null ? parseInt(String(quantidade_utilizacoes), 10) : null,
+      gerar_automatico: gerar_automatico !== undefined ? Boolean(gerar_automatico) : false,
+      entrega_automatico: entrega_automatico !== undefined ? Boolean(entrega_automatico) : false,
       ativo: ativo !== undefined ? Boolean(ativo) : true,
     });
 
@@ -129,7 +141,7 @@ export const atualizarPremio = async (
     const authReq = req as AuthRequest;
     const userId = authReq.userId!;
     const { id } = req.params;
-    const { servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, ativo } = req.body;
+    const { servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, valor_voucher, quantidade_utilizacoes, gerar_automatico, entrega_automatico, ativo } = req.body;
 
     const premio = await premioModel.findById(parseInt(id, 10));
 
@@ -205,6 +217,14 @@ export const atualizarPremio = async (
     if (validade_dias !== undefined) {
       updates.validade_dias = validade_dias ? parseInt(String(validade_dias), 10) : null;
     }
+    if (valor_voucher !== undefined) {
+      updates.valor_voucher = valor_voucher != null ? parseFloat(String(valor_voucher)) : null;
+    }
+    if (quantidade_utilizacoes !== undefined) {
+      updates.quantidade_utilizacoes = quantidade_utilizacoes != null ? parseInt(String(quantidade_utilizacoes), 10) : null;
+    }
+    if (gerar_automatico !== undefined) updates.gerar_automatico = Boolean(gerar_automatico);
+    if (entrega_automatico !== undefined) updates.entrega_automatico = Boolean(entrega_automatico);
     if (ativo !== undefined) updates.ativo = Boolean(ativo);
 
     const updated = await premioModel.update(premio.id, updates);
@@ -255,9 +275,9 @@ export const listarClientesFidelidade = async (
   try {
     const authReq = req as AuthRequest;
     const userId = authReq.userId!;
-    const { 
-      page = '1', 
-      limit = '50', 
+    const {
+      page = '1',
+      limit = '50',
       search,
       percentualMin,
       percentualMax,
@@ -428,7 +448,7 @@ export const listarConquistas = async (
     const conn = await pool.getConnection();
     try {
       const offset = (parseInt(String(page), 10) - 1) * parseInt(String(limit), 10);
-      
+
       let whereClause = 'WHERE pc.user_id = ?';
       const params: any[] = [userId];
 
@@ -443,9 +463,11 @@ export const listarConquistas = async (
       }
 
       const queryResult = await conn.query(
-        `SELECT pc.*, p.descricao as premio_descricao, p.servico as premio_servico
+        `SELECT pc.*, p.descricao as premio_descricao, p.servico as premio_servico,
+         c.nome as cliente_nome, c.telefone as cliente_telefone
          FROM premios_clientes pc
          INNER JOIN premios p ON pc.premio_id = p.id
+         LEFT JOIN vm_lav_clientes c ON pc.user_id = c.user_id AND pc.cpf_cliente = c.cpf
          ${whereClause}
          ORDER BY pc.data_conquista DESC
          LIMIT ? OFFSET ?`,
@@ -479,6 +501,8 @@ export const listarConquistas = async (
         conquistas: rows.map((row: any) => ({
           id: row.id,
           cpfCliente: row.cpf_cliente,
+          nomeCliente: row.cliente_nome,
+          telefoneCliente: row.cliente_telefone,
           premioId: row.premio_id,
           premioDescricao: row.premio_descricao,
           premioServico: row.premio_servico,
@@ -486,6 +510,7 @@ export const listarConquistas = async (
           dataValidade: row.data_validade,
           dataUtilizacao: row.data_utilizacao,
           utilizado: row.utilizado === 1 || row.utilizado === true,
+          codigoVoucher: row.codigo_voucher,
           observacao: row.observacao,
           createdAt: row.created_at,
         })),
@@ -496,6 +521,267 @@ export const listarConquistas = async (
     }
   } catch (error: any) {
     next(error);
+  }
+};
+
+/**
+ * Obter pedidos detalhados de um cliente
+ */
+export const obterPedidosDetalhados = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    const { cpf } = req.params;
+
+    if (!cpf) {
+      const appError: AppError = new Error('CPF é obrigatório');
+      appError.statusCode = 400;
+      throw appError;
+    }
+
+    const resultado = await fidelizacaoService.obterPedidosDetalhados(userId, cpf);
+    res.json(resultado);
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Registrar entrega de prêmio (salvar voucher e notificar)
+ */
+export const registrarEntregaPremio = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    const { id } = req.params;
+    const { codigo_voucher, data_validade, mensagem } = req.body;
+
+    const premioClienteId = parseInt(id, 10);
+    const premioCliente = await premioClienteModel.findById(premioClienteId);
+
+    if (!premioCliente || premioCliente.user_id !== userId) {
+      const appError: AppError = new Error('Prêmio não encontrado');
+      appError.statusCode = 404;
+      throw appError;
+    }
+
+    // 1. Atualizar voucher e validade (se fornecidos)
+    let validadeDate: Date | null = null;
+    if (data_validade) {
+      validadeDate = new Date(data_validade);
+      if (isNaN(validadeDate.getTime())) {
+        const appError: AppError = new Error('Data de validade inválida');
+        appError.statusCode = 400;
+        throw appError;
+      }
+    }
+
+    await premioClienteModel.atualizarVoucher(premioClienteId, codigo_voucher || null, validadeDate);
+
+    // 2. Enviar notificação via WhatsApp (se houver mensagem ou se solicitado)
+    // Se 'mensagem' estiver presente no body, usamos ela. 
+    // Caso contrário, o serviço usará o template padrão.
+    await fidelizacaoNotificacaoService.enviarNotificacaoEntregaPremio(userId, premioClienteId, mensagem);
+    await premioClienteModel.updateAutomacao(premioClienteId, { data_entrega: new Date() });
+
+    res.json({ message: 'Entrega registrada e notificação enviada com sucesso' });
+  } catch (error: any) {
+    try {
+      await fidelizacaoNotificacaoService.dispararConquistaAposFalhaEntrega(
+        (req as AuthRequest).userId!,
+        parseInt(String(req.params.id), 10)
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  }
+};
+
+/**
+ * Gerar voucher via API VM para uma conquista
+ */
+export const gerarVoucherConquista = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    const { id } = req.params;
+    const premioClienteId = parseInt(id, 10);
+
+    const resultado = await fidelizacaoService.gerarVoucherParaConquista(premioClienteId, userId);
+
+    if (!resultado.success) {
+      try {
+        const pc = await premioClienteModel.findById(premioClienteId);
+        const premio = pc ? await premioModel.findById(pc.premio_id) : null;
+        const config = await configModel.getOrCreateDefault(userId);
+        if (
+          pc &&
+          premio &&
+          config.notificar_conquistas &&
+          (premio.entrega_automatico || premio.gerar_automatico)
+        ) {
+          await fidelizacaoNotificacaoService.enviarOuRetentarConquistaFallback(userId, pc, premio, config);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const appError: AppError = new Error(resultado.error || 'Erro ao gerar voucher');
+      appError.statusCode = 400;
+      throw appError;
+    }
+
+    res.json({
+      message: 'Voucher gerado com sucesso',
+      codigo_voucher: resultado.codigo_voucher,
+      data_validade: resultado.data_validade?.toISOString(),
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Listar notificações enviadas (para Config > Fidelização > Notificações)
+ */
+export const listarNotificacoes = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    const { search, page, limit } = req.query;
+    const result = await notificacaoModel.listarComCliente(userId, {
+      search: search ? String(search).trim() : undefined,
+      page: page ? parseInt(String(page), 10) : undefined,
+      limit: limit ? parseInt(String(limit), 10) : undefined,
+    });
+    res.json(result);
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Obter configuração de fidelização (para exibir simulacao e toggle)
+ */
+export const getConfigFidelizacao = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    const config = await configModel.getOrCreateDefault(userId);
+    res.json({ config });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Ativar ou desativar simulação de notificações
+ */
+export const atualizarSimulacao = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+    let { simulacao } = req.body;
+    // Aceitar boolean ou string "true"/"false"
+    if (typeof simulacao === 'string') {
+      simulacao = simulacao === 'true';
+    }
+    if (typeof simulacao !== 'boolean') {
+      const appError: AppError = new Error('Campo simulacao deve ser true ou false');
+      appError.statusCode = 400;
+      throw appError;
+    }
+    const existing = await configModel.getOrCreateDefault(userId);
+    const updated = await configModel.upsert({
+      user_id: existing.user_id,
+      notificar_conquistas: existing.notificar_conquistas,
+      notificar_progresso: existing.notificar_progresso,
+      frequencia_progresso: existing.frequencia_progresso,
+      percentual_mudanca_minima: existing.percentual_mudanca_minima,
+      template_mensagem_conquista: existing.template_mensagem_conquista,
+      template_mensagem_entrega: existing.template_mensagem_entrega,
+      template_mensagem_progresso: existing.template_mensagem_progresso,
+      simulacao,
+      simulacao_desativada_em: existing.simulacao_desativada_em,
+    });
+    res.json({ config: updated, message: simulacao ? 'Simulação ativada' : 'Simulação desativada' });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Reenviar mensagem de uma notificação manualmente (WhatsApp).
+ */
+export const reenviarNotificacao = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const authReq = req as AuthRequest;
+  const userId = authReq.userId!;
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    if (isNaN(id)) {
+      const appError: AppError = new Error('ID inválido');
+      appError.statusCode = 400;
+      throw appError;
+    }
+    const notificacao = await notificacaoModel.findById(id);
+    if (!notificacao || notificacao.user_id !== userId) {
+      const appError: AppError = new Error('Notificação não encontrada');
+      appError.statusCode = 404;
+      throw appError;
+    }
+    const cliente = await clienteModel.findByCpf(userId, notificacao.cpf_cliente);
+    if (!cliente?.telefone) {
+      const appError: AppError = new Error('Cliente não encontrado ou sem telefone');
+      appError.statusCode = 400;
+      throw appError;
+    }
+    const whatsappManager = WhatsAppManager.getInstance();
+    const whatsappService = whatsappManager.getServiceSync(userId);
+    if (!whatsappService?.isReady()) {
+      const appError: AppError = new Error('WhatsApp não está pronto');
+      appError.statusCode = 400;
+      throw appError;
+    }
+    await whatsappService.sendMessage(cliente.telefone, notificacao.mensagem_enviada);
+    await notificacaoModel.update(id, { enviado_whatsapp: true, erro: null });
+    res.json({ success: true });
+  } catch (error: any) {
+    if (error.statusCode) {
+      next(error);
+      return;
+    }
+    try {
+      await notificacaoModel.update(id, { erro: error?.message || 'Erro ao reenviar' });
+    } catch (_) {}
+    res.status(500).json({ success: false, error: error?.message || 'Erro ao reenviar' });
   }
 };
 

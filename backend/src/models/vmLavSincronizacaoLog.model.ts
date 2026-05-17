@@ -1,7 +1,6 @@
 import pool from '../config/database';
-import logger from '../utils/logger';
 
-export type TipoSincronizacao = 'clientes' | 'pedidos' | 'ambos';
+export type TipoSincronizacao = 'clientes' | 'pedidos' | 'vouchers' | 'ambos';
 
 export interface VmLavSincronizacaoLog {
   id: number;

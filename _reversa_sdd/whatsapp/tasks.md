@@ -69,8 +69,9 @@
 
 - [ ] T-12 — Implementar `killBrowserProcessesForSession()` para Linux/Mac (atualmente só Windows)
   - Origem no legado: `backend/src/services/whatsapp.service.ts:106`
-  - Critério de pronto: logout completo funciona em Linux sem processos Chrome órfãos
-  - Confiança: 🔴 (não implementado no legado)
+  - Critério de pronto: logout completo funciona em Linux sem processos Chrome órfãos (pkill por path de sessão)
+  - Prioridade: **Should** — teste em ambiente Linux necessário para determinar se implementação é crítica
+  - Confiança: 🟡 (aguarda validação em ambiente Linux)
 
 ## Tarefas de Teste
 

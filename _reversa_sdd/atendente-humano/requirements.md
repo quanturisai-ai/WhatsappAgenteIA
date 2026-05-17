@@ -21,7 +21,7 @@ Módulo que gerencia atendentes humanos cadastrados no sistema. Quando a IA dete
 - Se nenhum atendente ativo estiver cadastrado, o alerta é ignorado (ou logado) 🟡
 - `sendTestMessage()` permite validar o número sem precisar de uma conversa real 🟢
 - `resolveIntervention()` marca `needs_intervention=false` na conversa e registra `intervention_resolved_at` 🟢
-- Múltiplos atendentes podem ser cadastrados — comportamento com múltiplos ativos (broadcast ou roundrobin) 🔴
+- Múltiplos atendentes podem ser cadastrados — com múltiplos ativos o alerta é enviado por **broadcast** (todos recebem simultaneamente via `Promise.all`) 🟢
 
 ## Requisitos Funcionais
 

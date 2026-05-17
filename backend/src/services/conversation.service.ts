@@ -1,6 +1,7 @@
 import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { WhatsAppService } from './whatsapp.service';
+import { emitConversationUpdated } from '../utils/conversationSocketEmitter';
 import { RAGService } from './rag.service';
 import { AgentConfigModel } from '../models/agentConfig.model';
 import { MediaModel } from '../models/media.model';
@@ -69,6 +70,7 @@ export class ConversationService {
       await this.conversationModel.update(conversationId, {
         auto_responding: false,
       });
+      await this.emitConversationCardIfFound(conversationId);
       logger.info(`Respostas automáticas pausadas para conversa ${conversationId}`);
     } catch (error: any) {
       logger.error(`Erro ao pausar auto-resposta para conversa ${conversationId}: ${error.message}`);
@@ -84,6 +86,7 @@ export class ConversationService {
       await this.conversationModel.update(conversationId, {
         auto_responding: true,
       });
+      await this.emitConversationCardIfFound(conversationId);
       logger.info(`Respostas automáticas retomadas para conversa ${conversationId}`);
     } catch (error: any) {
       logger.error(`Erro ao retomar auto-resposta para conversa ${conversationId}: ${error.message}`);
@@ -313,13 +316,27 @@ export class ConversationService {
 
   /**
    * Encerrar atendimento
+   * Marca auto_responding = true para que, ao receber nova mensagem (reabertura), o bot responda automaticamente
    */
   async finishConversation(conversationId: number): Promise<void> {
-    await this.pauseAutoResponding(conversationId);
     await this.conversationModel.update(conversationId, {
       status: 'finished',
+      auto_responding: true,
     });
+    await this.emitConversationCardIfFound(conversationId);
     logger.info(`Atendimento encerrado para conversa ${conversationId}`);
+  }
+
+  private async emitConversationCardIfFound(conversationId: number): Promise<void> {
+    try {
+      const conv = await this.conversationModel.findById(conversationId);
+      if (conv && conv.user_id) {
+        const card = await this.conversationModel.getConversationCardById(conv.user_id, conversationId);
+        if (card) emitConversationUpdated(conv.user_id, card);
+      }
+    } catch (err: any) {
+      logger.warn(`Erro ao emitir conversation:updated: ${err?.message}`);
+    }
   }
 
   /**

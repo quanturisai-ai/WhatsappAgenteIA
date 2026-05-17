@@ -1,0 +1,58 @@
+﻿src/controllers/conversation.controller.ts(290,11): error TS6133: '_status' is declared but its value is never read.
+src/controllers/humanAttendant.controller.ts(6,1): error TS6133: 'logger' is declared but its value is never read.
+src/controllers/humanAttendant.controller.ts(77,27): error TS2367: This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap.
+src/controllers/humanAttendant.controller.ts(78,26): error TS2551: Property 'isActive' does not exist on type 'HumanAttendant'. Did you mean 'is_active'?
+src/controllers/humanAttendant.controller.ts(79,37): error TS2551: Property 'isActive' does not exist on type 'HumanAttendant'. Did you mean 'is_active'?
+src/controllers/humanAttendant.controller.ts(84,56): error TS2551: Property 'phoneNumber' does not exist on type 'HumanAttendant'. Did you mean 'phone_number'?
+src/controllers/humanAttendant.controller.ts(87,99): error TS2551: Property 'createdAt' does not exist on type 'HumanAttendant'. Did you mean 'created_at'?
+src/controllers/humanAttendant.controller.ts(88,99): error TS2551: Property 'updatedAt' does not exist on type 'HumanAttendant'. Did you mean 'updated_at'?
+src/controllers/humanAttendant.controller.ts(138,27): error TS2367: This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap.
+src/controllers/humanAttendant.controller.ts(139,26): error TS2551: Property 'isActive' does not exist on type 'HumanAttendant'. Did you mean 'is_active'?
+src/controllers/humanAttendant.controller.ts(140,37): error TS2551: Property 'isActive' does not exist on type 'HumanAttendant'. Did you mean 'is_active'?
+src/controllers/humanAttendant.controller.ts(145,56): error TS2551: Property 'phoneNumber' does not exist on type 'HumanAttendant'. Did you mean 'phone_number'?
+src/controllers/humanAttendant.controller.ts(148,99): error TS2551: Property 'createdAt' does not exist on type 'HumanAttendant'. Did you mean 'created_at'?
+src/controllers/humanAttendant.controller.ts(149,99): error TS2551: Property 'updatedAt' does not exist on type 'HumanAttendant'. Did you mean 'updated_at'?
+src/controllers/humanAttendant.controller.ts(233,11): error TS6133: 'userId' is declared but its value is never read.
+src/controllers/vmLav.controller.ts(307,3): error TS6133: 'req' is declared but its value is never read.
+src/index.ts(306,15): error TS6133: '_status' is declared but its value is never read.
+src/middleware/errorHandler.ts(56,3): error TS6133: 'res' is declared but its value is never read.
+src/models/agentConfig.model.ts(56,13): error TS6133: '_result' is declared but its value is never read.
+src/models/attendantAlert.model.ts(3,1): error TS6133: 'logger' is declared but its value is never read.
+src/models/humanAttendant.model.ts(3,1): error TS6133: 'logger' is declared but its value is never read.
+src/models/media.model.ts(281,15): error TS6133: 'searchText' is declared but its value is never read.
+src/models/message.model.ts(2,19): error TS6133: 'Reaction' is declared but its value is never read.
+src/models/premioCliente.model.ts(2,1): error TS6133: 'logger' is declared but its value is never read.
+src/services/chromadb.service.ts(37,54): error TS2345: Argument of type '{ name: string; }' is not assignable to parameter of type 'GetCollectionParams'.
+  Property 'embeddingFunction' is missing in type '{ name: string; }' but required in type 'GetCollectionParams'.
+src/services/chromadb.service.ts(53,60): error TS2345: Argument of type '{ name: string; }' is not assignable to parameter of type 'GetCollectionParams'.
+  Property 'embeddingFunction' is missing in type '{ name: string; }' but required in type 'GetCollectionParams'.
+src/services/document.service.ts(4,22): error TS7016: Could not find a declaration file for module 'pdf-parse'. 'C:/WhatsappAgenteIA/backend/node_modules/pdf-parse/index.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/pdf-parse` if it exists or add a new declaration (.d.ts) file containing `declare module 'pdf-parse';`
+src/services/document.service.ts(38,21): error TS6133: 'req' is declared but its value is never read.
+src/services/document.service.ts(38,26): error TS6133: 'file' is declared but its value is never read.
+src/services/document.service.ts(41,18): error TS6133: 'req' is declared but its value is never read.
+src/services/document.service.ts(52,20): error TS6133: 'req' is declared but its value is never read.
+src/services/fidelizacao.service.ts(369,72): error TS2345: Argument of type '{ user_id: number; cpf_cliente: string; premio_id: number; data_conquista: Date; data_validade: Date | null; data_utilizacao: null; utilizado: false; observacao: null; }' is not assignable to parameter of type 'Omit<PremioCliente, "id" | "created_at" | "updated_at">'.
+  Property 'codigo_voucher' is missing in type '{ user_id: number; cpf_cliente: string; premio_id: number; data_conquista: Date; data_validade: Date | null; data_utilizacao: null; utilizado: false; observacao: null; }' but required in type 'Omit<PremioCliente, "id" | "created_at" | "updated_at">'.
+src/services/fidelizacao.service.ts(393,70): error TS2345: Argument of type '{ user_id: number; cpf_cliente: string; premio_id: number; data_conquista: Date; data_validade: Date | null; data_utilizacao: null; utilizado: false; observacao: null; }' is not assignable to parameter of type 'Omit<PremioCliente, "id" | "created_at" | "updated_at">'.
+  Property 'codigo_voucher' is missing in type '{ user_id: number; cpf_cliente: string; premio_id: number; data_conquista: Date; data_validade: Date | null; data_utilizacao: null; utilizado: false; observacao: null; }' but required in type 'Omit<PremioCliente, "id" | "created_at" | "updated_at">'.
+src/services/media.service.ts(32,21): error TS6133: 'req' is declared but its value is never read.
+src/services/media.service.ts(32,26): error TS6133: 'file' is declared but its value is never read.
+src/services/media.service.ts(35,18): error TS6133: 'req' is declared but its value is never read.
+src/services/media.service.ts(46,20): error TS6133: 'req' is declared but its value is never read.
+src/services/media.service.ts(100,50): error TS2345: Argument of type '{ user_id: number; filename: string; file_path: string; file_type: "video" | "image" | "document"; file_size: number; title: string; description: string; status: "processing"; indexing_status: "pending"; }' is not assignable to parameter of type 'Omit<Media, "id" | "created_at" | "updated_at">'.
+  Property 'is_active' is missing in type '{ user_id: number; filename: string; file_path: string; file_type: "video" | "image" | "document"; file_size: number; title: string; description: string; status: "processing"; indexing_status: "pending"; }' but required in type 'Omit<Media, "id" | "created_at" | "updated_at">'.
+src/services/media.service.ts(304,13): error TS2322: Type 'null' is not assignable to type 'string | undefined'.
+src/services/vmLav.service.ts(7,29): error TS6133: 'VmLavVoucher' is declared but its value is never read.
+src/services/vmLavConnectionManager.service.ts(11,1): error TS6133: 'path' is declared but its value is never read.
+src/services/vmLavConnectionManager.service.ts(12,1): error TS6133: 'fs' is declared but its value is never read.
+src/services/vmLavConnectionManager.service.ts(13,1): error TS6133: 'os' is declared but its value is never read.
+src/services/whatsapp.service.ts(19,7): error TS6133: 'chromeExecFound' is declared but its value is never read.
+src/services/whatsapp.service.ts(900,11): error TS2353: Object literal may only specify known properties, and 'authenticated' does not exist in type 'Partial<Omit<WhatsAppSession, "id" | "created_at" | "updated_at" | "user_id">>'.
+src/services/whatsapp.service.ts(905,14): error TS2339: Property 'io' does not exist on type 'WhatsAppService'.
+src/utils/vmLavScheduler.ts(10,7): error TS6133: 'credentialsModel' is declared but its value is never read.
+src/utils/vmLavTokenRenewal.ts(6,8): error TS6133: 'puppeteer' is declared but its value is never read.
+src/utils/vmLavTokenRenewal.ts(7,1): error TS6133: 'logger' is declared but its value is never read.
+src/utils/whatsappRawMessageLogger.ts(231,40): error TS6133: 'key' is declared but its value is never read.
+src/utils/whatsappRawMessageLogger.ts(267,61): error TS6133: 'key' is declared but its value is never read.
+src/utils/whatsappRawMessageLogger.ts(343,84): error TS6133: 'key' is declared but its value is never read.

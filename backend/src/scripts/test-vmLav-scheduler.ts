@@ -30,14 +30,14 @@ async function testScheduler() {
       const queryResult = await conn2.query(
         `SHOW COLUMNS FROM vm_lav_credentials WHERE Field IN ('ativo', 'status', 'intervalo_sincronizacao_minutos')`
       ) as any;
-      
+
       let columns: any[] = [];
       if (Array.isArray(queryResult)) {
         columns = Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
       } else if (queryResult && typeof queryResult === 'object' && 'length' in queryResult) {
         columns = Array.from(queryResult as any);
       }
-      
+
       console.log('Colunas encontradas:');
       if (columns.length > 0) {
         columns.forEach((col: any) => {
@@ -109,7 +109,7 @@ async function testScheduler() {
       if (rows.length === 0) {
         console.log('⚠️  Query não retornou nenhum resultado\n');
         console.log('   Testando variações da query...\n');
-        
+
         // Testar variações
         const var1Result = await conn4.query(
           'SELECT DISTINCT user_id FROM vm_lav_credentials WHERE ativo = TRUE AND status = ?',
@@ -173,7 +173,7 @@ async function testScheduler() {
     console.log('5️⃣  Testando findByUserId do VmLavCredentialsModel...');
     const credentialsModel = new VmLavCredentialsModel();
     const credentials = await credentialsModel.findByUserId(1);
-    
+
     if (!credentials) {
       console.log('⚠️  findByUserId(1) retornou null\n');
     } else {
@@ -185,13 +185,13 @@ async function testScheduler() {
       console.log(`   - Status: ${credentials.status} (tipo: ${typeof credentials.status})`);
       console.log(`   - Intervalo: ${credentials.intervalo_sincronizacao_minutos || 'NULL'} minutos`);
       console.log('');
-      
+
       // Verificar condições do scheduler
       console.log('   Verificando condições do scheduler:');
       console.log(`   - credentials existe: ${credentials ? 'SIM' : 'NÃO'}`);
       console.log(`   - credentials.ativo: ${credentials.ativo} (${credentials.ativo ? 'PASSA' : 'FALHA'})`);
       console.log(`   - credentials.status === 'ativo': ${credentials.status === 'ativo'} (${credentials.status === 'ativo' ? 'PASSA' : 'FALHA'})`);
-      
+
       if (!credentials.ativo || credentials.status !== 'ativo') {
         console.log('\n   ⚠️  ATENÇÃO: As credenciais não passam nas verificações do scheduler!');
         console.log('   O timer não será criado para este usuário.\n');
@@ -205,16 +205,15 @@ async function testScheduler() {
     try {
       // Tentar importar sem executar (para evitar erros de TypeScript)
       const schedulerModule = await import('../utils/vmLavScheduler');
-      if (schedulerModule && schedulerModule.iniciarScheduler) {
-        console.log('✅ iniciarScheduler importado com sucesso');
-        console.log(`   Tipo: ${typeof schedulerModule.iniciarScheduler}`);
+      if (schedulerModule && schedulerModule.startScheduler) {
+        console.log('✅ startScheduler importado com sucesso');
+        console.log(`   Tipo: ${typeof schedulerModule.startScheduler}`);
         console.log('');
       } else {
-        console.log('⚠️  iniciarScheduler não encontrado no módulo\n');
+        console.log('⚠️  startScheduler não encontrado no módulo\n');
       }
     } catch (error: any) {
-      console.log(`⚠️  Erro ao importar iniciarScheduler (pode ser erro de TypeScript): ${error.message}`);
-      console.log('   Isso é normal se houver erros de compilação no vmLav.service.ts\n');
+      console.log(`⚠️  Erro ao importar startScheduler: ${error.message}`);
     }
 
     // 7. Simular criação de timer

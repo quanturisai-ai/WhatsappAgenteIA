@@ -13,6 +13,10 @@ export interface Premio {
   data_fim_utilizacoes: Date | null;
   tipo_atingimento: TipoAtingimento;
   validade_dias: number | null;
+  valor_voucher: number | null;
+  quantidade_utilizacoes: number | null;
+  gerar_automatico: boolean;
+  entrega_automatico: boolean;
   ativo: boolean;
   created_at: Date;
   updated_at: Date;
@@ -23,7 +27,7 @@ export class PremioModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        `SELECT id, user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, ativo, created_at, updated_at 
+        `SELECT id, user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, valor_voucher, quantidade_utilizacoes, gerar_automatico, entrega_automatico, ativo, created_at, updated_at 
          FROM premios WHERE id = ?`,
         [id]
       ) as any;
@@ -47,7 +51,7 @@ export class PremioModel {
   async findByUserId(userId: number, ativo?: boolean): Promise<Premio[]> {
     const conn = await pool.getConnection();
     try {
-      let query = `SELECT id, user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, ativo, created_at, updated_at 
+      let query = `SELECT id, user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, valor_voucher, quantidade_utilizacoes, gerar_automatico, entrega_automatico, ativo, created_at, updated_at 
                    FROM premios WHERE user_id = ?`;
       const params: any[] = [userId];
 
@@ -77,8 +81,8 @@ export class PremioModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        `INSERT INTO premios (user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, ativo) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO premios (user_id, servico, objetivo, descricao, data_inicio_utilizacoes, data_fim_utilizacoes, tipo_atingimento, validade_dias, valor_voucher, quantidade_utilizacoes, gerar_automatico, entrega_automatico, ativo) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           premio.user_id,
           premio.servico,
@@ -88,6 +92,10 @@ export class PremioModel {
           premio.data_fim_utilizacoes || null,
           premio.tipo_atingimento || 'UNICO',
           premio.validade_dias,
+          premio.valor_voucher ?? null,
+          premio.quantidade_utilizacoes ?? null,
+          (premio.gerar_automatico ?? false) ? 1 : 0,
+          (premio.entrega_automatico ?? false) ? 1 : 0,
           premio.ativo !== undefined ? (premio.ativo ? 1 : 0) : 1,
         ]
       ) as any;
@@ -151,6 +159,22 @@ export class PremioModel {
         updates.push('validade_dias = ?');
         params.push(premio.validade_dias);
       }
+      if (premio.valor_voucher !== undefined) {
+        updates.push('valor_voucher = ?');
+        params.push(premio.valor_voucher);
+      }
+      if (premio.quantidade_utilizacoes !== undefined) {
+        updates.push('quantidade_utilizacoes = ?');
+        params.push(premio.quantidade_utilizacoes);
+      }
+      if (premio.gerar_automatico !== undefined) {
+        updates.push('gerar_automatico = ?');
+        params.push(premio.gerar_automatico ? 1 : 0);
+      }
+      if (premio.entrega_automatico !== undefined) {
+        updates.push('entrega_automatico = ?');
+        params.push(premio.entrega_automatico ? 1 : 0);
+      }
       if (premio.ativo !== undefined) {
         updates.push('ativo = ?');
         params.push(premio.ativo ? 1 : 0);
@@ -200,6 +224,10 @@ export class PremioModel {
       data_fim_utilizacoes: row.data_fim_utilizacoes || null,
       tipo_atingimento: (row.tipo_atingimento || 'UNICO') as TipoAtingimento,
       validade_dias: row.validade_dias,
+      valor_voucher: row.valor_voucher != null ? parseFloat(row.valor_voucher) : null,
+      quantidade_utilizacoes: row.quantidade_utilizacoes != null ? parseInt(row.quantidade_utilizacoes, 10) : null,
+      gerar_automatico: row.gerar_automatico === 1 || row.gerar_automatico === true,
+      entrega_automatico: row.entrega_automatico === 1 || row.entrega_automatico === true,
       ativo: row.ativo === 1 || row.ativo === true,
       created_at: row.created_at,
       updated_at: row.updated_at,

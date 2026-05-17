@@ -29,10 +29,10 @@ export const configurarCredenciais = async (
       appError.statusCode = 400;
       throw appError;
     }
-    
+
     // Verificar se há credenciais existentes
     const credentials = await vmLavService.obterCredenciais(userId);
-    
+
     // Se não há credenciais existentes, a senha é obrigatória
     if (!credentials && (!senha || senha.trim() === '')) {
       logger.warn(`[VM Lav] Validação falhou - Senha ausente e não há credenciais existentes`);
@@ -40,7 +40,7 @@ export const configurarCredenciais = async (
       appError.statusCode = 400;
       throw appError;
     }
-    
+
     // Se há credenciais existentes mas senha está vazia, permitir (manterá senha atual)
     // Se senha foi fornecida, usar a nova senha
 
@@ -52,7 +52,7 @@ export const configurarCredenciais = async (
     };
 
     logger.info(`[VM Lav] Iniciando configuração de credenciais para usuário ${userId}`);
-    
+
     let resultado: any;
     try {
       resultado = await vmLavService.configurarCredenciais(
@@ -88,7 +88,7 @@ export const configurarCredenciais = async (
     let resultadoSuccess = false;
     let resultadoMessage = 'N/A';
     let resultadoCredentialsId: number | undefined = undefined;
-    
+
     try {
       resultadoSuccess = Boolean((resultado as any)?.success);
       resultadoMessage = String((resultado as any)?.message || 'N/A');
@@ -98,7 +98,7 @@ export const configurarCredenciais = async (
       resultadoSuccess = false;
       resultadoMessage = 'Erro ao processar resultado';
     }
-    
+
     logger.info('[VM Lav] Resultado da configuração: success=' + String(resultadoSuccess) + ', message=' + String(resultadoMessage));
 
     if (!resultadoSuccess) {
@@ -117,9 +117,9 @@ export const configurarCredenciais = async (
       } catch (e) {
         errorMessage = 'Erro ao configurar credenciais';
       }
-      
+
       logger.error('[VM Lav] Falha na configuração: ' + String(errorMessage));
-      
+
       const appError: AppError = new Error(String(errorMessage));
       appError.statusCode = 400;
       throw appError;
@@ -134,7 +134,7 @@ export const configurarCredenciais = async (
     } catch (e) {
       // Usar mensagem padrão
     }
-    
+
     res.status(201).json({
       message: responseMessage,
       credentialsId: resultadoCredentialsId,
@@ -222,6 +222,35 @@ export const sincronizarClientes = async (
     const userId = authReq.userId!;
 
     const resultado = await vmLavService.sincronizarClientes(userId);
+
+    if (!resultado.success) {
+      const appError: AppError = new Error(resultado.message);
+      appError.statusCode = 400;
+      throw appError;
+    }
+
+    res.json({
+      message: resultado.message,
+      total: resultado.total,
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Sincronizar vouchers
+ */
+export const sincronizarVouchers = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.userId!;
+
+    const resultado = await vmLavService.sincronizarVouchers(userId);
 
     if (!resultado.success) {
       const appError: AppError = new Error(resultado.message);

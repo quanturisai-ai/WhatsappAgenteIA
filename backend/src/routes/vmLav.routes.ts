@@ -4,6 +4,7 @@ import {
   obterCredenciais,
   testarConexao,
   sincronizarClientes,
+  sincronizarVouchers,
   listarClientes,
   fecharNavegador,
 } from '../controllers/vmLav.controller';
@@ -21,6 +22,7 @@ router.get('/credentials', obterCredenciais);
 // Teste e sincronização
 router.post('/test-connection', testarConexao);
 router.post('/sync', sincronizarClientes);
+router.post('/sync-vouchers', sincronizarVouchers);
 
 // Clientes
 router.get('/clientes', listarClientes);

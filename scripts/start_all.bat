@@ -1,73 +1,65 @@
 @echo off
 REM ============================================
-REM Agente Zap - Iniciar Todos os Serviços
+REM Agente Zap - Iniciar Todos os Servicos (FIXO FINAL)
 REM ============================================
 
 setlocal enabledelayedexpansion
 
-REM Configurações
-set "BUILD_ROOT=%~dp0.."
-set "BACKEND_DIR=%BUILD_ROOT%\backend"
-set "FRONTEND_DIR=%BUILD_ROOT%\frontend"
-set "CHROMA_DIR=%BUILD_ROOT%\backend\chroma_db"
-set "LOGS_DIR=%BUILD_ROOT%\logs"
-set "SCRIPTS_DIR=%~dp0"
+REM Configurações de Caminho Absoluto
+set "BASE_DIR=C:\WhatsappAgenteIA"
+set "BACKEND_DIR=%BASE_DIR%\backend"
+set "FRONTEND_DIR=%BASE_DIR%\frontend"
+set "WHISPER_DIR=%BASE_DIR%\whisper-service"
 
-REM Criar diretório de logs se não existir
-if not exist "%LOGS_DIR%" mkdir "%LOGS_DIR%"
+echo [INFO] Aguardando estabilizacao do sistema (10s)...
+timeout /t 10 /nobreak >nul
 
-timeout /t 30 /nobreak >nul
-
-REM Verificar Node.js
-where node >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERRO] Node.js nao encontrado. Instale Node.js primeiro.
-    pause
-    exit /b 1
-)
-
-REM Verificar Python
-where python >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERRO] Python nao encontrado. Instale Python primeiro.
-    pause
-    exit /b 1
-)
-
-REM Iniciar Backend
-echo [INFO] Iniciando Backend...
-cd /d "%BACKEND_DIR%"
-start "Agente Zap - Backend" cmd /k "npm run dev > ..\logs\backend.log 2>&1"
-timeout /t 4 /nobreak >nul
-
-REM Iniciar Frontend
-echo [INFO] Iniciando Frontend...
-cd /d "%FRONTEND_DIR%"
-start "Agente Zap - Frontend" cmd /k "npm run dev > ..\logs\frontend.log 2>&1"
-
+REM ============================================
+REM LIMPEZA DE PROCESSOS (CHROME)
+REM ============================================
+echo [INFO] Finalizando instancias travadas do Chrome...
+taskkill /F /IM chrome.exe /T >nul 2>&1
+timeout /t 2 /nobreak >nul
 
 REM Verificar MariaDB
 net start | findstr /i "MariaDB" >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo [AVISO] MariaDB nao esta rodando. Tentando iniciar...
+    echo [AVISO] MariaDB nao esta rodando. Iniciando...
     net start MariaDB
-    timeout /t 5 /nobreak >nul
 )
 
-REM Verificar Ollama
-curl -s http://localhost:11434/api/tags >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [AVISO] Ollama nao esta rodando. Iniciando...
-    start /min "" "ollama serve"
-    timeout /t 5 /nobreak >nul
-)
+REM ============================================
+REM INICIAR WHISPER SERVICE
+REM ============================================
+echo [INFO] Iniciando Whisper Service...
+cd /d "%WHISPER_DIR%"
+start "Agente Zap - Whisper" cmd /c "start.bat"
+timeout /t 5 /nobreak >nul
 
+REM ============================================
+REM INICIAR BACKEND
+REM ============================================
+echo [INFO] Iniciando Backend...
+cd /d "%BACKEND_DIR%"
+start "Agente Zap - Backend" cmd /k "npm run dev"
+timeout /t 5 /nobreak >nul
+
+REM ============================================
+REM INICIAR FRONTEND
+REM ============================================
+echo [INFO] Iniciando Frontend...
+cd /d "%FRONTEND_DIR%"
+start "Agente Zap - Frontend" cmd /k "npm run dev"
+timeout /t 5 /nobreak >nul
+
+REM ============================================
+REM INICIAR OLLAMA
+REM ============================================
+echo [INFO] Iniciando Ollama...
+:: O comando 'serve' garante que a API do Ollama esteja disponível
+start "Agente Zap - Ollama" cmd /c "ollama serve"
 
 echo.
-echo [SUCESSO] Todos os servicos foram iniciados!
-echo.
-echo Backend: http://localhost:3301
-echo Frontend: http://localhost:3300
-echo Pressione qualquer tecla para sair...
+echo [SUCESSO] Todos os servicos foram disparados!
+echo Verifique se a janela do Chrome apareceu para o Captcha.
 pause >nul
-

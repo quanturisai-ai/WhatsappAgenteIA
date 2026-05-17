@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Conversation } from '../types';
 import { conversationService } from '../services/conversation.service';
+import { socketService } from '../services/socket.service';
+import { authService } from '../services/auth.service';
 import { ConversationCard } from './ConversationCard';
 import toast from 'react-hot-toast';
 import { Search, X, Plus } from 'lucide-react';
@@ -23,14 +25,6 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
         setIsLoading(true);
       }
       const data = await conversationService.listConversations(undefined, search);
-      // Log para debug - verificar contactName e contactNumber
-      console.log('📋 Conversas recebidas do backend:', data.map(c => ({
-        id: c.id,
-        contactName: c.contactName || 'NULL/VAZIO',
-        contactNumber: c.contactNumber,
-        usandoNome: !!(c.contactName && c.contactName.trim() !== ''),
-        lastMessage: c.lastMessage ? c.lastMessage.substring(0, 30) + '...' : 'sem mensagem'
-      })));
       setConversations(data);
     } catch (error: any) {
       if (!silent) {
@@ -71,14 +65,44 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
   // Carregar conversas inicialmente
   useEffect(() => {
     loadConversations();
-    
-    // Recarregar a cada 5 segundos silenciosamente (apenas se não houver busca ativa)
-    const interval = setInterval(() => {
-      if (!activeSearchTerm.trim()) {
-        loadConversations(undefined, true); // Modo silencioso
-      }
-    }, 5000);
-    return () => clearInterval(interval);
+  }, []);
+
+  // Socket: atualizações em tempo real (substitui polling de 5s)
+  useEffect(() => {
+    const token = authService.getToken();
+    if (!token) return;
+
+    const socket = socketService.connect(token);
+    if (!socket) return;
+
+    const handleConversationUpdated = (data: { conversation: Conversation }) => {
+      if (activeSearchTerm.trim()) return; // Não atualizar durante busca
+      setConversations((prev) =>
+        prev.map((c) => (c.id === data.conversation.id ? data.conversation : c))
+      );
+    };
+
+    const handleConversationNew = (data: { conversation: Conversation }) => {
+      if (activeSearchTerm.trim()) return;
+      setConversations((prev) => {
+        if (prev.some((c) => c.id === data.conversation.id)) return prev;
+        return [data.conversation, ...prev];
+      });
+    };
+
+    const handleConnect = () => {
+      loadConversations(undefined, true);
+    };
+
+    socket.on('conversation:updated', handleConversationUpdated);
+    socket.on('conversation:new', handleConversationNew);
+    socket.on('connect', handleConnect);
+
+    return () => {
+      socket.off('conversation:updated', handleConversationUpdated);
+      socket.off('conversation:new', handleConversationNew);
+      socket.off('connect', handleConnect);
+    };
   }, [activeSearchTerm]);
 
   // Filtrar conversas que precisam intervenção

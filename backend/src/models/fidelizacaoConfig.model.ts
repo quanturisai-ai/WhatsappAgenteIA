@@ -10,26 +10,56 @@ export interface FidelizacaoConfig {
   frequencia_progresso: FrequenciaProgresso;
   percentual_mudanca_minima: number;
   template_mensagem_conquista: string | null;
+  template_mensagem_entrega: string | null;
   template_mensagem_progresso: string | null;
   simulacao: boolean;
+  simulacao_desativada_em: Date | null;
   created_at: Date;
   updated_at: Date;
 }
 
 export class FidelizacaoConfigModel {
   /**
-   * Busca configuração por user_id
+   * Busca configuração por user_id.
+   * Se a coluna simulacao_desativada_em não existir, usa SELECT sem ela.
    */
   async findByUserId(userId: number): Promise<FidelizacaoConfig | null> {
     const conn = await pool.getConnection();
     try {
-      const queryResult = await conn.query(
-        `SELECT id, user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
+      const fullSelect = `SELECT id, user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
+         percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_entrega, template_mensagem_progresso, 
+         simulacao, simulacao_desativada_em, created_at, updated_at 
+         FROM fidelizacao_config WHERE user_id = ?`;
+      const selectSemEntregaComBarreira = `SELECT id, user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
+         percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_progresso, 
+         simulacao, simulacao_desativada_em, created_at, updated_at 
+         FROM fidelizacao_config WHERE user_id = ?`;
+      const fallbackSelect = `SELECT id, user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
          percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_progresso, 
          simulacao, created_at, updated_at 
-         FROM fidelizacao_config WHERE user_id = ?`,
-        [userId]
-      ) as any;
+         FROM fidelizacao_config WHERE user_id = ?`;
+
+      let queryResult: any;
+      try {
+        queryResult = await conn.query(fullSelect, [userId]);
+      } catch (err: any) {
+        const msg = err?.message || '';
+        if (msg.includes('template_mensagem_entrega')) {
+          try {
+            queryResult = await conn.query(selectSemEntregaComBarreira, [userId]);
+          } catch (err2: any) {
+            if ((err2?.message || '').includes('simulacao_desativada_em') || (err2?.message || '').includes('Unknown column')) {
+              queryResult = await conn.query(fallbackSelect, [userId]);
+            } else {
+              throw err2;
+            }
+          }
+        } else if (msg.includes('simulacao_desativada_em') || msg.includes('Unknown column')) {
+          queryResult = await conn.query(fallbackSelect, [userId]);
+        } else {
+          throw err;
+        }
+      }
 
       let rows: any[] = [];
       if (Array.isArray(queryResult)) {
@@ -39,7 +69,11 @@ export class FidelizacaoConfigModel {
       }
 
       if (rows && rows.length > 0) {
-        return this.mapRowToConfig(rows[0]);
+        const row = rows[0];
+        if (row.simulacao_desativada_em === undefined) {
+          row.simulacao_desativada_em = null;
+        }
+        return this.mapRowToConfig(row);
       }
       return null;
     } finally {
@@ -57,24 +91,98 @@ export class FidelizacaoConfigModel {
       const existing = await this.findByUserId(config.user_id);
 
       if (existing) {
-        // Atualizar
-        await conn.query(
-          `UPDATE fidelizacao_config SET 
-           notificar_conquistas = ?, notificar_progresso = ?, frequencia_progresso = ?, 
-           percentual_mudanca_minima = ?, template_mensagem_conquista = ?, 
-           template_mensagem_progresso = ?, simulacao = ? 
-           WHERE user_id = ?`,
-          [
-            config.notificar_conquistas ? 1 : 0,
-            config.notificar_progresso ? 1 : 0,
-            config.frequencia_progresso,
-            config.percentual_mudanca_minima,
-            config.template_mensagem_conquista,
-            config.template_mensagem_progresso,
-            config.simulacao ? 1 : 0,
-            config.user_id,
-          ]
-        );
+        // Atualizar — se simulacao estiver sendo desativada (era true, agora é false), registrar o timestamp
+        const desativandoSimulacao = existing.simulacao === true && config.simulacao === false;
+        const simulacaoDesativadaEm = desativandoSimulacao ? new Date() : existing.simulacao_desativada_em;
+
+        try {
+          await conn.query(
+            `UPDATE fidelizacao_config SET 
+             notificar_conquistas = ?, notificar_progresso = ?, frequencia_progresso = ?, 
+             percentual_mudanca_minima = ?, template_mensagem_conquista = ?, template_mensagem_entrega = ?,
+             template_mensagem_progresso = ?, simulacao = ?, simulacao_desativada_em = ?
+             WHERE user_id = ?`,
+            [
+              config.notificar_conquistas ? 1 : 0,
+              config.notificar_progresso ? 1 : 0,
+              config.frequencia_progresso,
+              config.percentual_mudanca_minima,
+              config.template_mensagem_conquista,
+              config.template_mensagem_entrega ?? null,
+              config.template_mensagem_progresso,
+              config.simulacao ? 1 : 0,
+              simulacaoDesativadaEm || null,
+              config.user_id,
+            ]
+          );
+        } catch (err: any) {
+          const msg = err?.message || String(err);
+          if (msg.includes('template_mensagem_entrega')) {
+            try {
+              await conn.query(
+                `UPDATE fidelizacao_config SET 
+                 notificar_conquistas = ?, notificar_progresso = ?, frequencia_progresso = ?, 
+                 percentual_mudanca_minima = ?, template_mensagem_conquista = ?, 
+                 template_mensagem_progresso = ?, simulacao = ?, simulacao_desativada_em = ?
+                 WHERE user_id = ?`,
+                [
+                  config.notificar_conquistas ? 1 : 0,
+                  config.notificar_progresso ? 1 : 0,
+                  config.frequencia_progresso,
+                  config.percentual_mudanca_minima,
+                  config.template_mensagem_conquista,
+                  config.template_mensagem_progresso,
+                  config.simulacao ? 1 : 0,
+                  simulacaoDesativadaEm || null,
+                  config.user_id,
+                ]
+              );
+            } catch (err2: any) {
+              const msg2 = err2?.message || String(err2);
+              if (msg2.includes('simulacao_desativada_em') || msg2.includes('Unknown column')) {
+                await conn.query(
+                  `UPDATE fidelizacao_config SET 
+                   notificar_conquistas = ?, notificar_progresso = ?, frequencia_progresso = ?, 
+                   percentual_mudanca_minima = ?, template_mensagem_conquista = ?, 
+                   template_mensagem_progresso = ?, simulacao = ?
+                   WHERE user_id = ?`,
+                  [
+                    config.notificar_conquistas ? 1 : 0,
+                    config.notificar_progresso ? 1 : 0,
+                    config.frequencia_progresso,
+                    config.percentual_mudanca_minima,
+                    config.template_mensagem_conquista,
+                    config.template_mensagem_progresso,
+                    config.simulacao ? 1 : 0,
+                    config.user_id,
+                  ]
+                );
+              } else {
+                throw err2;
+              }
+            }
+          } else if (msg.includes('simulacao_desativada_em') || msg.includes('Unknown column')) {
+            await conn.query(
+              `UPDATE fidelizacao_config SET 
+               notificar_conquistas = ?, notificar_progresso = ?, frequencia_progresso = ?, 
+               percentual_mudanca_minima = ?, template_mensagem_conquista = ?, 
+               template_mensagem_progresso = ?, simulacao = ?
+               WHERE user_id = ?`,
+              [
+                config.notificar_conquistas ? 1 : 0,
+                config.notificar_progresso ? 1 : 0,
+                config.frequencia_progresso,
+                config.percentual_mudanca_minima,
+                config.template_mensagem_conquista,
+                config.template_mensagem_progresso,
+                config.simulacao ? 1 : 0,
+                config.user_id,
+              ]
+            );
+          } else {
+            throw err;
+          }
+        }
         const updated = await this.findByUserId(config.user_id);
         if (!updated) {
           throw new Error('Erro ao atualizar configuração');
@@ -82,22 +190,48 @@ export class FidelizacaoConfigModel {
         return updated;
       } else {
         // Criar
-        const queryResult = await conn.query(
-          `INSERT INTO fidelizacao_config 
-           (user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
-            percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_progresso, simulacao) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            config.user_id,
-            config.notificar_conquistas ? 1 : 0,
-            config.notificar_progresso ? 1 : 0,
-            config.frequencia_progresso,
-            config.percentual_mudanca_minima,
-            config.template_mensagem_conquista,
-            config.template_mensagem_progresso,
-            config.simulacao ? 1 : 0,
-          ]
-        ) as any;
+        let queryResult: any;
+        try {
+          queryResult = await conn.query(
+            `INSERT INTO fidelizacao_config 
+             (user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
+              percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_entrega, template_mensagem_progresso, simulacao) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              config.user_id,
+              config.notificar_conquistas ? 1 : 0,
+              config.notificar_progresso ? 1 : 0,
+              config.frequencia_progresso,
+              config.percentual_mudanca_minima,
+              config.template_mensagem_conquista,
+              config.template_mensagem_entrega ?? null,
+              config.template_mensagem_progresso,
+              config.simulacao ? 1 : 0,
+            ]
+          ) as any;
+        } catch (insErr: any) {
+          const im = insErr?.message || '';
+          if (im.includes('template_mensagem_entrega')) {
+            queryResult = await conn.query(
+              `INSERT INTO fidelizacao_config 
+               (user_id, notificar_conquistas, notificar_progresso, frequencia_progresso, 
+                percentual_mudanca_minima, template_mensagem_conquista, template_mensagem_progresso, simulacao) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                config.user_id,
+                config.notificar_conquistas ? 1 : 0,
+                config.notificar_progresso ? 1 : 0,
+                config.frequencia_progresso,
+                config.percentual_mudanca_minima,
+                config.template_mensagem_conquista,
+                config.template_mensagem_progresso,
+                config.simulacao ? 1 : 0,
+              ]
+            ) as any;
+          } else {
+            throw insErr;
+          }
+        }
 
         let result: any;
         if (Array.isArray(queryResult)) {
@@ -144,16 +278,26 @@ Você conquistou um novo prêmio:
 
 Continue utilizando nossos serviços para ganhar mais prêmios!`;
 
+    // Template padrão de entrega (voucher) — distinto do de conquista
+    const templateEntregaPadrao = `Olá, {nome}!
+
+Segue a entrega do seu prêmio: {descricao_premio}
+
+{data_validade}
+
+Use o código e a validade informados abaixo ao utilizar o voucher.`;
+
     // Template padrão de progresso
-    const templateProgressoPadrao = `Olá, {nome}! 👋
+    const templateProgressoPadrao = `Olá, {primeiro_nome}! 👋
+Veja seu progresso na fidelidade:
 
-Seu progresso na fidelidade:
-• Lavagens: {lavagens_atual}/{lavagens_objetivo} → {lavagens_percentual}% completo
-• Secagens: {secagens_atual}/{secagens_objetivo} → {secagens_percentual}% completo
-• Total: {total_atual}/{total_objetivo} → {total_percentual}% completo
+Prêmio: {lavagens_proximo_premio}
+{lavagens_barra}
+• {lavagens_faltam_texto}
 
-Próximo prêmio: {lavagens_proximo_premio}
-Faltam apenas {lavagens_faltam} utilizações!
+Prêmio: {secagens_proximo_premio}
+{secagens_barra}
+• {secagens_faltam_texto}
 
 Continue assim! 🚀`;
 
@@ -164,8 +308,10 @@ Continue assim! 🚀`;
       frequencia_progresso: 'marcos',
       percentual_mudanca_minima: 10,
       template_mensagem_conquista: templateConquistaPadrao,
+      template_mensagem_entrega: templateEntregaPadrao,
       template_mensagem_progresso: templateProgressoPadrao,
       simulacao: true, // Iniciar em modo simulação
+      simulacao_desativada_em: null,
     });
   }
 
@@ -178,8 +324,10 @@ Continue assim! 🚀`;
       frequencia_progresso: row.frequencia_progresso as FrequenciaProgresso,
       percentual_mudanca_minima: row.percentual_mudanca_minima,
       template_mensagem_conquista: row.template_mensagem_conquista,
+      template_mensagem_entrega: row.template_mensagem_entrega ?? null,
       template_mensagem_progresso: row.template_mensagem_progresso,
       simulacao: row.simulacao === 1 || row.simulacao === true,
+      simulacao_desativada_em: row.simulacao_desativada_em ? new Date(row.simulacao_desativada_em) : null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };

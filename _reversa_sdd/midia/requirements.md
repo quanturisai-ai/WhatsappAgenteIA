@@ -20,7 +20,7 @@ Módulo que gerencia arquivos de mídia (imagens, vídeos, documentos, áudio) u
 
 - Tipos suportados: `video`, `image`, `document`, `audio` 🟢
 - Flag `mandatory_send=true`: mídia enviada automaticamente antes da resposta da IA em toda conversa ativa 🟢
-- Flag `is_active`: controla disponibilidade para envio — mídias inativas não são enviadas nem pelo sistema nem pelo comando especial 🟡
+- Flag `is_active`: controla disponibilidade para envio — mídias inativas **não devem ser enviadas em nenhum caso**, incluindo o comando `[ENVIAR_MIDIA:id]` 🟢. **BUG NO LEGADO:** o código do comando `[ENVIAR_MIDIA:id]` verifica apenas `status='completed'` sem checar `is_active` (`conversation.service.ts:259`) — comportamento incorreto confirmado; na reimplementação deve verificar ambos
 - `source = 'outgoing'` para mídias cadastradas pelo operador; `source = 'incoming'` para mídias recebidas do WhatsApp 🟢
 - `indexing_status` reflete o estado da indexação no ChromaDB 🟢
 

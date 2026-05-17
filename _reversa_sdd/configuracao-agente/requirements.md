@@ -17,7 +17,7 @@ Módulo que gerencia as configurações do agente IA: identidade do negócio, co
 
 ## Regras de Negócio
 
-- Um registro de `AgentConfig` por usuário — criado automaticamente na primeira busca se não existir 🟡
+- Um registro de `AgentConfig` por usuário — na primeira busca, se não existir, o controller **retorna defaults em memória sem persistir** (objeto padrão com embeddingModel=`deepseek-r1`, temperature=0.7, maxAgeHours=12 etc.) — **não** insere no banco 🟢. Criação real só acontece via PUT/POST
 - Modelo padrão: `'deepseek-r1'` para embedding e geração 🟢
 - Temperatura padrão: `0.7` 🟢
 - `max_age_hours` padrão: `12` horas 🟢
@@ -67,4 +67,4 @@ Então um registro padrão é criado e retornado
 |---------|-----------------|-----------|
 | `backend/src/routes/agentConfig.routes.ts` | `GET /`, `PUT /`, `POST /` (alias) | 🟢 |
 | `backend/src/controllers/agentConfig.controller.ts` | `getAgentConfig`, `updateAgentConfig` | 🟢 |
-| `backend/src/services/agentConfig.service.ts` | `AgentConfigService` | 🟢 |
+| `backend/src/models/agentConfig.model.ts` | `AgentConfigModel.findByUserId`, `update` — **não há service layer** | 🟢 |

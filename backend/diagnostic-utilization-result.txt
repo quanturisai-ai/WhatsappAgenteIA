@@ -1,0 +1,17 @@
+[2026-02-15T20:18:16.004Z] Iniciando diagnóstico de utilização...
+[2026-02-15T20:18:16.012Z] Prêmios encontrados no banco: 3
+[2026-02-15T20:18:16.012Z] Verificando prêmio ID 2 - Código: BP8NVCBK - Utilizado: 0
+[2026-02-15T20:18:16.013Z] -> Voucher local encontrado: ID_VM 220778, Saldo 33.90
+[2026-02-15T20:18:16.598Z] -> API Sucesso: 1 movimentações encontradas
+[2026-02-15T20:18:16.598Z]    * [ENTRADA] Valor: 33.9 Data: 2026-02-15T18:09:32.112701
+[2026-02-15T20:18:16.599Z] -> Retiradas: 0
+[2026-02-15T20:18:16.599Z] Verificando prêmio ID 1 - Código: 6XY4WN9B - Utilizado: 0
+[2026-02-15T20:18:16.600Z] -> Voucher local encontrado: ID_VM 220782, Saldo 16.95
+[2026-02-15T20:18:17.089Z] -> API Sucesso: 1 movimentações encontradas
+[2026-02-15T20:18:17.089Z]    * [ENTRADA] Valor: 16.95 Data: 2026-02-15T18:16:44.139021
+[2026-02-15T20:18:17.089Z] -> Retiradas: 0
+[2026-02-15T20:18:17.089Z] Verificando prêmio ID 3 - Código: PSN5MFZP - Utilizado: 0
+[2026-02-15T20:18:17.090Z] -> Voucher local encontrado: ID_VM 220753, Saldo 16.95
+[2026-02-15T20:18:17.726Z] -> API Sucesso: 1 movimentações encontradas
+[2026-02-15T20:18:17.726Z]    * [ENTRADA] Valor: 16.95 Data: 2026-02-15T16:47:34.998569
+[2026-02-15T20:18:17.726Z] -> Retiradas: 0

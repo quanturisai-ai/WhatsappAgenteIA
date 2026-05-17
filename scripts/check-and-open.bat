@@ -11,7 +11,7 @@ set "FRONTEND_DIR=%BUILD_ROOT%\frontend"
 set "LOGS_DIR=%BUILD_ROOT%\logs"
 set "CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe"
 set "FRONTEND_URL=http://localhost:3300"
-set "BACKEND_PORT=3301"
+set "BACKEND_PORT=3302"
 set "FRONTEND_PORT=3300"
 
 REM Criar diretório de logs se não existir

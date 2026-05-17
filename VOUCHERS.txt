@@ -1,0 +1,2445 @@
+https://apps.vmhub.vmtecnologia.io/wallet/api/v1/vouchers/listaVoucher?execCount=true&pagina=0&quantidade=100&direcaoOrdenacao=DESC&campoOrdenacao=voucher.dataCriacao
+
+{"idEmpresaLogada":1737,"listaIdEmpresas":[1737],"listaIdCategoria":[],"tipoHierarquia":"FILHOS","ativa":[],"restricoesCarteira":[{"id":null,"classe":{"nome":"CLIENTE","descricao":"Cliente","tipo":"AUTOCOMPLETE","selecionada":false},"limiteUsoItemRestricao":null,"limiteValorItemRestricao":null,"itens":[]}],"vigente":[]}
+
+{
+    "headers": [
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.dataCriacao",
+            "text": "Data de Criação"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.codigo",
+            "text": "Código"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.categoria",
+            "text": "Categoria"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.comHierarquia",
+            "text": "Toda Hierarquia da Empresa"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.validade",
+            "text": "Validade"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.valor",
+            "text": "Valor"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "contas.saldo",
+            "text": "Saldo"
+        },
+        {
+            "sortable": true,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "voucher.contaUsuarioCriacao",
+            "text": "Responsável"
+        },
+        {
+            "sortable": false,
+            "visibilidade": "NAO_VISIVEL",
+            "visivelHTML": false,
+            "value": "carteira",
+            "text": "Carteira"
+        },
+        {
+            "sortable": false,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "cliente",
+            "text": "Cliente"
+        },
+        {
+            "sortable": false,
+            "visibilidade": "VISIVEL",
+            "visivelHTML": true,
+            "value": "acoes",
+            "text": "Ações"
+        }
+    ],
+    "resultadoPaginado": {
+        "elementos": [
+            [
+                "15/02/2026",
+                "PSN5MFZP",
+                {
+                    "id": 10,
+                    "idAplicacao": null,
+                    "nome": "Fidelidade",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "14/02/2026 00:00:00 ~ 31/03/2026 00:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                249173,
+                "70960835105 - Jullya Rosa Silva",
+                {
+                    "idVoucher": 220753,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/02/2026",
+                "DLP3SN99",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "11/02/2026 00:00:00 ~ 15/04/2026 00:00:00",
+                "R$ 340,00",
+                "R$ 340,00",
+                "Lavateria Park Lozandes",
+                247943,
+                "",
+                {
+                    "idVoucher": 219726,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/02/2026",
+                "748TKR7G",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "09/02/2026 00:00:00 ~ 31/03/2026 00:00:00",
+                "R$ 340,00",
+                "R$ 119,65",
+                "Lavateria Park Lozandes",
+                246613,
+                "",
+                {
+                    "idVoucher": 218677,
+                    "ativo": true
+                }
+            ],
+            [
+                "03/02/2026",
+                "2HSGG4FM",
+                {
+                    "id": 6,
+                    "idAplicacao": null,
+                    "nome": "Parceria",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "03/02/2026 00:00:00 ~ 03/03/2026 00:00:00",
+                "R$ 406,80",
+                "R$ 305,10",
+                "Lavateria Park Lozandes",
+                243717,
+                "",
+                {
+                    "idVoucher": 216305,
+                    "ativo": true
+                }
+            ],
+            [
+                "03/02/2026",
+                "BDQ84M7Q",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/02/2026 05:00:00 ~ 31/03/2026 00:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                243605,
+                "",
+                {
+                    "idVoucher": 216207,
+                    "ativo": true
+                }
+            ],
+            [
+                "29/01/2026",
+                "WZ6HCYNW",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 55,00",
+                "R$ 4,15",
+                "Lavateria Park Lozandes",
+                240759,
+                "01190972140 - Joao Victor Borba Matos",
+                {
+                    "idVoucher": 213745,
+                    "ativo": true
+                }
+            ],
+            [
+                "29/01/2026",
+                "FZ6VXF7B",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                240757,
+                "",
+                {
+                    "idVoucher": 213743,
+                    "ativo": true
+                }
+            ],
+            [
+                "29/01/2026",
+                "JDP4G2B8",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                240756,
+                "32180945850 - Flavio Antonio Toledo Sonego",
+                {
+                    "idVoucher": 213742,
+                    "ativo": true
+                }
+            ],
+            [
+                "29/01/2026",
+                "5MLDBMK3",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 34,00",
+                "R$ 0,10",
+                "Lavateria Park Lozandes",
+                240752,
+                "07504855154 - Luan Euripedes Rodrigues de Lima",
+                {
+                    "idVoucher": 213739,
+                    "ativo": true
+                }
+            ],
+            [
+                "23/01/2026",
+                "YP6QBJCG",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "22/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                238008,
+                "",
+                {
+                    "idVoucher": 211459,
+                    "ativo": true
+                }
+            ],
+            [
+                "20/01/2026",
+                "C9J7WQTC",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "19/01/2026 00:00:00 ~ 31/01/2026 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                237030,
+                "",
+                {
+                    "idVoucher": 210694,
+                    "ativo": true
+                }
+            ],
+            [
+                "13/01/2026",
+                "YY4MGGGH",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "13/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 35,00",
+                "R$ 18,05",
+                "Lavateria Park Lozandes",
+                234431,
+                "",
+                {
+                    "idVoucher": 208584,
+                    "ativo": true
+                }
+            ],
+            [
+                "13/01/2026",
+                "RLPLS5YN",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 340,00",
+                "R$ 1,00",
+                "Lavateria Park Lozandes",
+                234318,
+                "",
+                {
+                    "idVoucher": 208488,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/01/2026",
+                "K2TGVNDT",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "11/01/2026 00:00:00 ~ 28/02/2026 00:00:00",
+                "R$ 35,00",
+                "R$ 1,10",
+                "Lavateria Park Lozandes",
+                233728,
+                "",
+                {
+                    "idVoucher": 207986,
+                    "ativo": true
+                }
+            ],
+            [
+                "05/01/2026",
+                "PJ3C5BP7",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/01/2026 00:00:00 ~ 31/01/2026 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                231426,
+                "",
+                {
+                    "idVoucher": 206165,
+                    "ativo": true
+                }
+            ],
+            [
+                "22/12/2025",
+                "LDLDM8R9",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "22/12/2025 00:00:00 ~ 31/01/2026 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                225830,
+                "",
+                {
+                    "idVoucher": 201570,
+                    "ativo": true
+                }
+            ],
+            [
+                "17/12/2025",
+                "2M8GNRXS",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "16/12/2025 11:00:00 ~ 31/01/2026 05:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                223898,
+                "",
+                {
+                    "idVoucher": 200070,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/12/2025",
+                "5LG6Y8ZC",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "10/12/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                221272,
+                "",
+                {
+                    "idVoucher": 197976,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/12/2025",
+                "GSB6VZLV",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "10/12/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                221258,
+                "",
+                {
+                    "idVoucher": 197965,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/12/2025",
+                "YBTKMQRY",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/12/2025 11:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                220637,
+                "",
+                {
+                    "idVoucher": 197447,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/12/2025",
+                "WQX73594",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/12/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 40,00",
+                "R$ 6,10",
+                "Lavateria Park Lozandes",
+                220571,
+                "",
+                {
+                    "idVoucher": 197393,
+                    "ativo": true
+                }
+            ],
+            [
+                "02/12/2025",
+                "7V4VVW6W",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "02/12/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                218006,
+                "05647171184 - Arlo Vinicio Fagundes Peixoto",
+                {
+                    "idVoucher": 195222,
+                    "ativo": true
+                }
+            ],
+            [
+                "26/11/2025",
+                "CP6SNP45",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "26/11/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                215673,
+                "82280959100 - Fernando dos Santos Souza",
+                {
+                    "idVoucher": 193198,
+                    "ativo": true
+                }
+            ],
+            [
+                "17/11/2025",
+                "JPRH84WJ",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "17/11/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                212925,
+                "64704718387 - John Helbert e Silva Palma",
+                {
+                    "idVoucher": 190859,
+                    "ativo": true
+                }
+            ],
+            [
+                "16/11/2025",
+                "Y4H75VXL",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/11/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 51,35",
+                "Lavateria Park Lozandes",
+                212301,
+                "",
+                {
+                    "idVoucher": 190353,
+                    "ativo": true
+                }
+            ],
+            [
+                "14/11/2025",
+                "W9PTQ26Q",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "14/11/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 32,00",
+                "R$ 32,00",
+                "Lavateria Park Lozandes",
+                211695,
+                "",
+                {
+                    "idVoucher": 189867,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/11/2025",
+                "TP5PHR2M",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "10/11/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                210800,
+                "",
+                {
+                    "idVoucher": 189097,
+                    "ativo": true
+                }
+            ],
+            [
+                "03/11/2025",
+                "D9X79LY5",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "02/11/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 35,00",
+                "R$ 1,10",
+                "Lavateria Park Lozandes",
+                207776,
+                "",
+                {
+                    "idVoucher": 186560,
+                    "ativo": true
+                }
+            ],
+            [
+                "27/10/2025",
+                "8K6QPW42",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "26/10/2025 00:00:00 ~ 31/10/2025 00:00:00",
+                "R$ 35,00",
+                "R$ 1,10",
+                "Lavateria Park Lozandes",
+                204556,
+                "",
+                {
+                    "idVoucher": 183805,
+                    "ativo": true
+                }
+            ],
+            [
+                "22/10/2025",
+                "Y4MJVT2P",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "21/10/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 140,00",
+                "R$ 4,40",
+                "Lavateria Park Lozandes",
+                202659,
+                "",
+                {
+                    "idVoucher": 182219,
+                    "ativo": true
+                }
+            ],
+            [
+                "20/10/2025",
+                "P6H5SZX3",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "19/10/2025 00:00:00 ~ 22/10/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                201948,
+                "",
+                {
+                    "idVoucher": 181582,
+                    "ativo": true
+                }
+            ],
+            [
+                "20/10/2025",
+                "CMZPQWB9",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "19/10/2025 09:00:00 ~ 31/10/2025 00:00:00",
+                "R$ 51,00",
+                "R$ 0,15",
+                "Lavateria Park Lozandes",
+                201565,
+                "",
+                {
+                    "idVoucher": 181222,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/10/2025",
+                "J82X8S5R",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "11/10/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                198604,
+                "",
+                {
+                    "idVoucher": 178829,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/10/2025",
+                "YRMJ6ZC2",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "10/10/2025 00:00:00 ~ 12/10/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                198245,
+                "",
+                {
+                    "idVoucher": 178532,
+                    "ativo": true
+                }
+            ],
+            [
+                "01/10/2025",
+                "YGFQ4VR8",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/10/2025 00:00:00 ~ 31/10/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                193919,
+                "",
+                {
+                    "idVoucher": 174735,
+                    "ativo": true
+                }
+            ],
+            [
+                "01/10/2025",
+                "DCLMGNY3",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/10/2025 00:00:00 ~ 02/10/2025 00:00:00",
+                "R$ 35,00",
+                "R$ 18,05",
+                "Lavateria Park Lozandes",
+                193913,
+                "",
+                {
+                    "idVoucher": 174731,
+                    "ativo": true
+                }
+            ],
+            [
+                "29/09/2025",
+                "88WTLJ89",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/09/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 35,00",
+                "R$ 35,00",
+                "Lavateria Park Lozandes",
+                193421,
+                "",
+                {
+                    "idVoucher": 174315,
+                    "ativo": true
+                }
+            ],
+            [
+                "28/09/2025",
+                "YVDJ3V88",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "28/09/2025 00:00:00 ~ 30/09/2025 03:00:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                193079,
+                "",
+                {
+                    "idVoucher": 174021,
+                    "ativo": false
+                }
+            ],
+            [
+                "25/09/2025",
+                "4HBYQRG5",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "25/09/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 35,00",
+                "R$ 35,00",
+                "Lavateria Park Lozandes",
+                192038,
+                "",
+                {
+                    "idVoucher": 173211,
+                    "ativo": true
+                }
+            ],
+            [
+                "17/09/2025",
+                "QRPLPJGX",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "17/09/2025 00:00:00 ~ 31/10/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                189183,
+                "01254989188 - Sostenes Araujo Ferraz Santos",
+                {
+                    "idVoucher": 170834,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/09/2025",
+                "T4R453LR",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/09/2025 00:00:00 ~ 31/10/2025 00:00:00",
+                "R$ 340,00",
+                "R$ 1,00",
+                "Lavateria Park Lozandes",
+                187134,
+                "28039472857 - Paula Cristina Queiroz Parizotto",
+                {
+                    "idVoucher": 169065,
+                    "ativo": true
+                }
+            ],
+            [
+                "31/08/2025",
+                "DH5ZGD4V",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "31/08/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 17,00",
+                "Lavateria Park Lozandes",
+                182205,
+                "03633843167 - Yasmin Alves de Melo",
+                {
+                    "idVoucher": 164727,
+                    "ativo": true
+                }
+            ],
+            [
+                "26/08/2025",
+                "LCB9W2YQ",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "26/08/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 140,00",
+                "R$ 4,40",
+                "Lavateria Park Lozandes",
+                180459,
+                "01254989188 - Sostenes Araujo Ferraz Santos",
+                {
+                    "idVoucher": 163245,
+                    "ativo": true
+                }
+            ],
+            [
+                "26/08/2025",
+                "RH95XMW8",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "25/08/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 153,05",
+                "Lavateria Park Lozandes",
+                180453,
+                "01254989188 - Sostenes Araujo Ferraz Santos",
+                {
+                    "idVoucher": 163241,
+                    "ativo": true
+                }
+            ],
+            [
+                "26/08/2025",
+                "SZMZV3YK",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "25/08/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 153,05",
+                "Lavateria Park Lozandes",
+                180452,
+                "05202687176 - Gessica Pereira da Silva Santos Ferraz",
+                {
+                    "idVoucher": 163240,
+                    "ativo": true
+                }
+            ],
+            [
+                "26/08/2025",
+                "M8QKJ72Y",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "26/08/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 170,00",
+                "Lavateria Park Lozandes",
+                180450,
+                "05202687176 - Gessica Pereira da Silva Santos Ferraz",
+                {
+                    "idVoucher": 163238,
+                    "ativo": false
+                }
+            ],
+            [
+                "13/08/2025",
+                "BC2TV9K7",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/08/2025 00:00:00 ~ 30/09/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                176014,
+                "05202687176 - Gessica Pereira da Silva Santos Ferraz",
+                {
+                    "idVoucher": 159575,
+                    "ativo": false
+                }
+            ],
+            [
+                "01/08/2025",
+                "2VTHR5BF",
+                {
+                    "id": 10,
+                    "idAplicacao": null,
+                    "nome": "Fidelidade",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/08/2025 00:00:00 ~ 31/08/2025 00:00:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                170491,
+                "",
+                {
+                    "idVoucher": 154802,
+                    "ativo": false
+                }
+            ],
+            [
+                "01/08/2025",
+                "QHJ3D7LB",
+                {
+                    "id": 10,
+                    "idAplicacao": null,
+                    "nome": "Fidelidade",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/08/2025 00:00:00 ~ 31/08/2025 00:00:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                170441,
+                "",
+                {
+                    "idVoucher": 154754,
+                    "ativo": true
+                }
+            ],
+            [
+                "02/07/2025",
+                "TG3LMVBM",
+                {
+                    "id": 12,
+                    "idAplicacao": null,
+                    "nome": "Higienização/Manutenção",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "02/07/2025 00:00:00 ~ 03/07/2025 00:00:00",
+                "R$ 100,00",
+                "R$ 83,05",
+                "Lavateria Park Lozandes",
+                158127,
+                "",
+                {
+                    "idVoucher": 144478,
+                    "ativo": false
+                }
+            ],
+            [
+                "01/07/2025",
+                "RSSF4YBR",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/07/2025 00:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 17,95",
+                "R$ 17,95",
+                "Lavateria Park Lozandes",
+                157680,
+                "",
+                {
+                    "idVoucher": 144073,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "C85KY4GX",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                149554,
+                "",
+                {
+                    "idVoucher": 137384,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "T6KYD4RY",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                149552,
+                "",
+                {
+                    "idVoucher": 137382,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "5TV2FZLL",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 17,05",
+                "Lavateria Park Lozandes",
+                149550,
+                "",
+                {
+                    "idVoucher": 137380,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "4VXD2MB5",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 70,00",
+                "R$ 70,00",
+                "Lavateria Park Lozandes",
+                149548,
+                "",
+                {
+                    "idVoucher": 137378,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "JMK49KS2",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                149546,
+                "",
+                {
+                    "idVoucher": 137376,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "Q5RGHZW4",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 34,00",
+                "Lavateria Park Lozandes",
+                149544,
+                "",
+                {
+                    "idVoucher": 137375,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/06/2025",
+                "C7CF4NFF",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/06/2025 00:00:00 ~ 31/12/2025 00:00:00",
+                "R$ 34,00",
+                "R$ 0,10",
+                "Lavateria Park Lozandes",
+                149541,
+                "",
+                {
+                    "idVoucher": 137372,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/06/2025",
+                "P69TH58M",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "11/06/2025 00:00:00 ~ 11/06/2025 23:55:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                149468,
+                "",
+                {
+                    "idVoucher": 137309,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/06/2025",
+                "9NTBTMTL",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "09/06/2025 00:00:00 ~ 31/07/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 85,25",
+                "Lavateria Park Lozandes",
+                148761,
+                "97104213104 - Alison Coelho Aragao",
+                {
+                    "idVoucher": 136682,
+                    "ativo": true
+                }
+            ],
+            [
+                "08/06/2025",
+                "3ZLL4N66",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "08/06/2025 00:00:00 ~ 31/07/2025 04:58:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                148155,
+                "",
+                {
+                    "idVoucher": 136142,
+                    "ativo": true
+                }
+            ],
+            [
+                "27/05/2025",
+                "ZD87YVWL",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "27/05/2025 00:00:00 ~ 31/07/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 160,00",
+                "Lavateria Park Lozandes",
+                143108,
+                "",
+                {
+                    "idVoucher": 131688,
+                    "ativo": true
+                }
+            ],
+            [
+                "25/05/2025",
+                "CVMTHBZ7",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "25/05/2025 00:00:00 ~ 31/05/2025 00:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                142177,
+                "22198252805 - Daniel da Rocha",
+                {
+                    "idVoucher": 130871,
+                    "ativo": true
+                }
+            ],
+            [
+                "23/05/2025",
+                "XVWTYHWQ",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "23/05/2025 00:00:00 ~ 31/05/2025 23:19:00",
+                "R$ 40,00",
+                "R$ 40,00",
+                "Lavateria Park Lozandes",
+                141715,
+                "00921833954 - Ingrid Pereira Batista",
+                {
+                    "idVoucher": 130488,
+                    "ativo": true
+                }
+            ],
+            [
+                "23/05/2025",
+                "S9ZBPL53",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "23/05/2025 00:00:00 ~ 31/05/2025 23:00:00",
+                "R$ 40,00",
+                "R$ 40,00",
+                "Lavateria Park Lozandes",
+                141521,
+                "05897098107 - Thales Vinicius Amado Costa",
+                {
+                    "idVoucher": 130314,
+                    "ativo": true
+                }
+            ],
+            [
+                "17/05/2025",
+                "YG923PYQ",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "17/05/2025 00:00:00 ~ 18/05/2025 00:00:00",
+                "R$ 40,00",
+                "R$ 40,00",
+                "Lavateria Park Lozandes",
+                139269,
+                "05897098107 - Thales Vinicius Amado Costa",
+                {
+                    "idVoucher": 128263,
+                    "ativo": true
+                }
+            ],
+            [
+                "17/05/2025",
+                "P2RBS3YX",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "17/05/2025 00:00:00 ~ 18/05/2025 00:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                139260,
+                "05897098107 - Thales Vinicius Amado Costa",
+                {
+                    "idVoucher": 128256,
+                    "ativo": true
+                }
+            ],
+            [
+                "11/05/2025",
+                "TVX5Z3SF",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "11/05/2025 00:00:00 ~ 12/05/2025 23:00:00",
+                "R$ 34,00",
+                "R$ 6,88",
+                "Lavateria Park Lozandes",
+                136707,
+                "",
+                {
+                    "idVoucher": 125941,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/05/2025",
+                "8JS96W7M",
+                {
+                    "id": 3,
+                    "idAplicacao": null,
+                    "nome": "Atendentes",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "09/05/2025 00:00:00 ~ 20/08/2025 00:00:00",
+                "R$ 1.000,00",
+                "R$ 322,00",
+                "Lavateria Park Lozandes",
+                136124,
+                "",
+                {
+                    "idVoucher": 125415,
+                    "ativo": false
+                }
+            ],
+            [
+                "08/05/2025",
+                "TFPDVGGC",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "08/05/2025 11:00:00 ~ 30/11/2025 00:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                135829,
+                "50908596120 - Ana Carolina Freire Moura de Oliveira Tenorio",
+                {
+                    "idVoucher": 125144,
+                    "ativo": true
+                }
+            ],
+            [
+                "08/05/2025",
+                "XPH4LX2M",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "08/05/2025 00:00:00 ~ 31/10/2025 23:00:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                135725,
+                "",
+                {
+                    "idVoucher": 125051,
+                    "ativo": true
+                }
+            ],
+            [
+                "06/05/2025",
+                "HHKZSKGL",
+                {
+                    "id": 6,
+                    "idAplicacao": null,
+                    "nome": "Parceria",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "06/05/2025 00:00:00 ~ 06/06/2025 23:59:00",
+                "R$ 70,00",
+                "R$ 2,20",
+                "Lavateria Park Lozandes",
+                135050,
+                "03248555670 - SUSILEY DA SILVA SANTANA",
+                {
+                    "idVoucher": 124440,
+                    "ativo": true
+                }
+            ],
+            [
+                "06/05/2025",
+                "37RJMZJF",
+                {
+                    "id": 4,
+                    "idAplicacao": null,
+                    "nome": "Compra em Lote",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "06/05/2025 00:00:00 ~ 14/06/2025 23:59:00",
+                "R$ 170,00",
+                "R$ 0,50",
+                "Lavateria Park Lozandes",
+                134953,
+                "01254989188 - Sostenes Araujo Ferraz Santos",
+                {
+                    "idVoucher": 124352,
+                    "ativo": true
+                }
+            ],
+            [
+                "23/04/2025",
+                "4D2QBL5T",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "23/04/2025 00:04:00 ~ 31/05/2025 00:00:00",
+                "R$ 500,00",
+                "R$ 8,45",
+                "Lavateria Park Lozandes",
+                130618,
+                "",
+                {
+                    "idVoucher": 120501,
+                    "ativo": true
+                }
+            ],
+            [
+                "15/04/2025",
+                "TRDH2TXL",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "15/04/2025 00:00:00 ~ 30/04/2025 23:23:00",
+                "R$ 500,00",
+                "R$ 8,45",
+                "Lavateria Park Lozandes",
+                128123,
+                "",
+                {
+                    "idVoucher": 118280,
+                    "ativo": true
+                }
+            ],
+            [
+                "07/04/2025",
+                "HG6R39ZJ",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "01/04/2025 00:00:00 ~ 30/04/2025 23:58:00",
+                "R$ 500,00",
+                "R$ 245,75",
+                "Lavateria Park Lozandes",
+                125489,
+                "73382256134 - Barbara Candida Rodrigues Portilho",
+                {
+                    "idVoucher": 115860,
+                    "ativo": true
+                }
+            ],
+            [
+                "06/04/2025",
+                "JMH59WY6",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "06/04/2025 00:00:00 ~ 31/07/2025 05:00:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                125105,
+                "07517205340 - Alex Oliveira da Silva Junior",
+                {
+                    "idVoucher": 115557,
+                    "ativo": false
+                }
+            ],
+            [
+                "27/03/2025",
+                "NBR7286L",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "27/03/2025 00:00:00 ~ 30/04/2025 23:59:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                121968,
+                "36014613153 - Edson Candido Tenorio",
+                {
+                    "idVoucher": 112837,
+                    "ativo": false
+                }
+            ],
+            [
+                "19/03/2025",
+                "PW2BGKPZ",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "19/03/2025 00:00:00 ~ 31/03/2025 23:59:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                120025,
+                "22198252805 - Daniel da Rocha",
+                {
+                    "idVoucher": 111126,
+                    "ativo": true
+                }
+            ],
+            [
+                "18/03/2025",
+                "FM3734JW",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "18/03/2025 00:00:00 ~ 31/03/2025 23:59:00",
+                "R$ 40,00",
+                "R$ 6,10",
+                "Lavateria Park Lozandes",
+                119612,
+                "01190972140 - Joao Victor Borba Matos",
+                {
+                    "idVoucher": 110775,
+                    "ativo": true
+                }
+            ],
+            [
+                "18/03/2025",
+                "4825GSL3",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "18/03/2025 00:00:00 ~ 31/03/2025 23:58:00",
+                "R$ 1.000,00",
+                "R$ 440,65",
+                "Lavateria Park Lozandes",
+                119590,
+                "73382256134 - Barbara Candida Rodrigues Portilho",
+                {
+                    "idVoucher": 110755,
+                    "ativo": true
+                }
+            ],
+            [
+                "12/03/2025",
+                "BJGJWRYK",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "12/03/2025 00:00:00 ~ 31/03/2025 23:59:00",
+                "R$ 600,00",
+                "R$ 583,05",
+                "Lavateria Park Lozandes",
+                118138,
+                "00707251109 - Diego Vinicius Portilho Costa, 04462544102 - Eriany da Cruz Matos, 07517205340 - Alex Oliveira da Silva Junior, 22198252805 - Daniel da Rocha, 22789065187 - Leila Candida da Costa Barros, 36014613153 - Edson Candido Tenorio, 65959434172 - Eduardo Braga de Oliveira, 66616522172 - Angelina Ferreira de Souza, 73382256134 - Barbara Candida Rodrigues Portilho, 94793530168 - Elza Augusta da Silva Braga, 94891230134 - Rubhia Gabrielle Candida Pedroso, 99524538172 - Fernanda de Paiva Pinto Costa Luz",
+                {
+                    "idVoucher": 109427,
+                    "ativo": true
+                }
+            ],
+            [
+                "10/03/2025",
+                "RDY7DB72",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "10/03/2025 00:02:00 ~ 10/03/2025 23:59:00",
+                "R$ 17,00",
+                "R$ 0,05",
+                "Lavateria Park Lozandes",
+                117819,
+                "01254989188 - Sostenes Araujo Ferraz Santos",
+                {
+                    "idVoucher": 109147,
+                    "ativo": true
+                }
+            ],
+            [
+                "05/03/2025",
+                "RRS9HMVX",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "05/03/2025 00:00:00 ~ 31/03/2025 23:58:00",
+                "R$ 16,95",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                116355,
+                "",
+                {
+                    "idVoucher": 107836,
+                    "ativo": true
+                }
+            ],
+            [
+                "04/03/2025",
+                "V99DF5SV",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "04/03/2025 00:00:00 ~ 31/03/2025 00:00:00",
+                "R$ 17,00",
+                "R$ 2,00",
+                "Lavateria Park Lozandes",
+                116024,
+                "71238360220 - Cristiane de Azevedo Gouveia",
+                {
+                    "idVoucher": 107520,
+                    "ativo": true
+                }
+            ],
+            [
+                "27/02/2025",
+                "Z6QWXKCK",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "27/02/2025 00:00:00 ~ 27/03/2025 00:00:00",
+                "R$ 500,00",
+                "R$ 5,42",
+                "Lavateria Park Lozandes",
+                114666,
+                "73382256134 - Barbara Candida Rodrigues Portilho",
+                {
+                    "idVoucher": 106264,
+                    "ativo": false
+                }
+            ],
+            [
+                "24/02/2025",
+                "LMKTYKC9",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "24/02/2025 00:00:00 ~ 31/03/2025 00:00:00",
+                "R$ 33,90",
+                "R$ 33,90",
+                "Lavateria Park Lozandes",
+                113946,
+                "39368924821 - Flavio Goncalves Moreira",
+                {
+                    "idVoucher": 105568,
+                    "ativo": true
+                }
+            ],
+            [
+                "24/02/2025",
+                "CR6JYZ98",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "24/02/2025 00:00:00 ~ 31/03/2025 00:00:00",
+                "R$ 19,98",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                113942,
+                "71005282242 - Willians Jose Sanchez Munoz",
+                {
+                    "idVoucher": 105565,
+                    "ativo": true
+                }
+            ],
+            [
+                "23/02/2025",
+                "XTY5FSP2",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "22/02/2025 00:00:00 ~ 31/03/2025 00:00:00",
+                "R$ 27,00",
+                "R$ 12,00",
+                "Lavateria Park Lozandes",
+                113705,
+                "27849759249 - Silvio Roberto de Sousa Rodrigues",
+                {
+                    "idVoucher": 105352,
+                    "ativo": true
+                }
+            ],
+            [
+                "09/02/2025",
+                "VC9NZBV9",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                false,
+                "09/02/2025 00:00:00 ~ 10/02/2025 00:00:00",
+                "R$ 9,99",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                110335,
+                "65959434172 - Eduardo Braga de Oliveira",
+                {
+                    "idVoucher": 102303,
+                    "ativo": true
+                }
+            ],
+            [
+                "02/02/2025",
+                "9LTDKPNF",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                false,
+                "01/02/2025 00:00:00 ~ 28/02/2025 22:00:00",
+                "R$ 30,00",
+                "R$ 10,02",
+                "Lavateria Park Lozandes",
+                108305,
+                "25539718852 - Carlos Eduardo de Oliveira Zanusso",
+                {
+                    "idVoucher": 100390,
+                    "ativo": true
+                }
+            ],
+            [
+                "02/02/2025",
+                "R5H32NPX",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "02/02/2025 22:00:00 ~ 02/02/2025 22:00:00",
+                "R$ 16,95",
+                "R$ 16,95",
+                "Lavateria Park Lozandes",
+                108296,
+                "",
+                {
+                    "idVoucher": 100381,
+                    "ativo": false
+                }
+            ],
+            [
+                "02/02/2025",
+                "ML7PDY4W",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "02/02/2025 01:00:00 ~ 02/02/2025 01:00:00",
+                "R$ 40,00",
+                "R$ 40,00",
+                "Lavateria Park Lozandes",
+                108294,
+                "",
+                {
+                    "idVoucher": 100379,
+                    "ativo": false
+                }
+            ],
+            [
+                "29/01/2025",
+                "DFFDDHR2",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2025 01:00:00 ~ 30/01/2025 01:00:00",
+                "R$ 9,99",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                107149,
+                "",
+                {
+                    "idVoucher": 99346,
+                    "ativo": false
+                }
+            ],
+            [
+                "29/01/2025",
+                "VJPZW38J",
+                {
+                    "id": 1,
+                    "idAplicacao": null,
+                    "nome": "Cortesia",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "29/01/2025 00:01:00 ~ 30/01/2025 00:04:00",
+                "R$ 9,99",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                107147,
+                "",
+                {
+                    "idVoucher": 99344,
+                    "ativo": false
+                }
+            ],
+            [
+                "25/01/2025",
+                "9MZ23J8W",
+                {
+                    "id": 2,
+                    "idAplicacao": null,
+                    "nome": "Reembolso",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "25/01/2025 00:00:00 ~ 25/02/2025 00:00:00",
+                "R$ 9,99",
+                "R$ 0,00",
+                "Lavateria Park Lozandes",
+                106063,
+                "02690398133 - Paulo Henrique da Silva",
+                {
+                    "idVoucher": 98381,
+                    "ativo": false
+                }
+            ],
+            [
+                "15/01/2025",
+                "DTGFZ4W6",
+                {
+                    "id": 3,
+                    "idAplicacao": null,
+                    "nome": "Atendentes",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "15/01/2025 00:00:00 ~ 31/01/2025 00:00:00",
+                "R$ 1,00",
+                "R$ 0,99",
+                "Lavateria Park Lozandes",
+                103656,
+                "",
+                {
+                    "idVoucher": 96171,
+                    "ativo": false
+                }
+            ],
+            [
+                "20/12/2024",
+                "QK6GJRG3",
+                {
+                    "id": 3,
+                    "idAplicacao": null,
+                    "nome": "Atendentes",
+                    "editavel": true,
+                    "comumEmpresas": false,
+                    "creditoReal": false
+                },
+                true,
+                "20/12/2024 12:00:00 ~ 22/12/2025 23:00:00",
+                "R$ 30,00",
+                "R$ 30,00",
+                "Franciele Moro",
+                96685,
+                "",
+                {
+                    "idVoucher": 89990,
+                    "ativo": false
+                }
+            ]
+        ],
+        "total": 98
+    },
+    "agrupado": false,
+    "listaId": [
+        249173,
+        247943,
+        246613,
+        243717,
+        243605,
+        240759,
+        240757,
+        240756,
+        240752,
+        238008,
+        237030,
+        234431,
+        234318,
+        233728,
+        231426,
+        225830,
+        223898,
+        221272,
+        221258,
+        220637,
+        220571,
+        218006,
+        215673,
+        212925,
+        212301,
+        211695,
+        210800,
+        207776,
+        204556,
+        202659,
+        201948,
+        201565,
+        198604,
+        198245,
+        193919,
+        193913,
+        193421,
+        193079,
+        192038,
+        189183,
+        187134,
+        182205,
+        180459,
+        180453,
+        180452,
+        180450,
+        176014,
+        170491,
+        170441,
+        158127,
+        157680,
+        149554,
+        149552,
+        149550,
+        149548,
+        149546,
+        149544,
+        149541,
+        149468,
+        148761,
+        148155,
+        143108,
+        142177,
+        141715,
+        141521,
+        139269,
+        139260,
+        136707,
+        136124,
+        135829,
+        135725,
+        135050,
+        134953,
+        130618,
+        128123,
+        125489,
+        125105,
+        121968,
+        120025,
+        119612,
+        119590,
+        118138,
+        117819,
+        116355,
+        116024,
+        114666,
+        113946,
+        113942,
+        113705,
+        110335,
+        108305,
+        108296,
+        108294,
+        107149,
+        107147,
+        106063,
+        103656,
+        96685
+    ]
+}

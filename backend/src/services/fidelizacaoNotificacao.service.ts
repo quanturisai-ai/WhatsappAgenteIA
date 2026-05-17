@@ -1,9 +1,9 @@
 import logger from '../utils/logger';
 import { FidelizacaoConfigModel, FidelizacaoConfig } from '../models/fidelizacaoConfig.model';
-import { FidelizacaoNotificacaoModel, FidelizacaoNotificacao } from '../models/fidelizacaoNotificacao.model';
+import { FidelizacaoNotificacaoModel } from '../models/fidelizacaoNotificacao.model';
 import { VmLavClienteModel, VmLavCliente } from '../models/vmLavCliente.model';
 import { PremioModel, Premio } from '../models/premio.model';
-import { PremioCliente } from '../models/premioCliente.model';
+import { PremioClienteModel, PremioCliente } from '../models/premioCliente.model';
 import { FidelizacaoService, SaldoFidelidade } from './fidelizacao.service';
 import { WhatsAppManager } from './whatsapp.manager';
 
@@ -18,6 +18,7 @@ export class FidelizacaoNotificacaoService {
   private notificacaoModel: FidelizacaoNotificacaoModel;
   private clienteModel: VmLavClienteModel;
   private premioModel: PremioModel;
+  private premioClienteModel: PremioClienteModel;
   private fidelizacaoService: FidelizacaoService;
 
   constructor() {
@@ -25,6 +26,7 @@ export class FidelizacaoNotificacaoService {
     this.notificacaoModel = new FidelizacaoNotificacaoModel();
     this.clienteModel = new VmLavClienteModel();
     this.premioModel = new PremioModel();
+    this.premioClienteModel = new PremioClienteModel();
     this.fidelizacaoService = new FidelizacaoService();
   }
 
@@ -70,6 +72,9 @@ export class FidelizacaoNotificacaoService {
             if (!premio) {
               continue;
             }
+            if (premio.entrega_automatico) {
+              continue;
+            }
 
             const mensagem = this.processarTemplateConquista(
               config.template_mensagem_conquista || this.getTemplateConquistaPadrao(),
@@ -81,8 +86,11 @@ export class FidelizacaoNotificacaoService {
             const notificacao = await this.notificacaoModel.create({
               user_id: userId,
               cpf_cliente: cpf,
+              pedido_id: null,
+              data_venda: new Date(),
               tipo_notificacao: 'CONQUISTA',
               premio_id: premio.id,
+              regra_id: null,
               mensagem_enviada: mensagem,
               enviado_whatsapp: false,
               data_envio: new Date(),
@@ -128,7 +136,7 @@ export class FidelizacaoNotificacaoService {
       if (config.notificar_progresso) {
         try {
           const deveEnviar = await this.verificarSeDeveEnviarProgresso(userId, cpf, config);
-          
+
           if (deveEnviar) {
             const saldos = await this.obterSaldosFidelidade(userId, cpf);
             const mensagem = this.processarTemplateProgresso(
@@ -141,8 +149,11 @@ export class FidelizacaoNotificacaoService {
             const notificacao = await this.notificacaoModel.create({
               user_id: userId,
               cpf_cliente: cpf,
+              pedido_id: null,
+              data_venda: new Date(),
               tipo_notificacao: 'PROGRESSO',
               premio_id: null,
+              regra_id: null,
               mensagem_enviada: mensagem,
               enviado_whatsapp: false,
               data_envio: new Date(),
@@ -193,6 +204,202 @@ export class FidelizacaoNotificacaoService {
   }
 
   /**
+   * Envia notificação manual de entrega de prêmio com código de voucher
+   * @param options.marcarDataEntrega — após envio bem-sucedido, grava data_entrega em premios_clientes
+   * @param options.apenasSeAutomatico — só envia se o prêmio tiver entrega_automatico (fluxo VM)
+   */
+  async enviarNotificacaoEntregaPremio(
+    userId: number,
+    premioClienteId: number,
+    mensagemPersonalizada?: string,
+    options?: { marcarDataEntrega?: boolean; apenasSeAutomatico?: boolean }
+  ): Promise<boolean> {
+    try {
+      const premioCliente = await this.premioClienteModel.findById(premioClienteId);
+      if (!premioCliente) {
+        throw new Error('Prêmio do cliente não encontrado');
+      }
+
+      const premioRow = await this.premioModel.findById(premioCliente.premio_id);
+      if (options?.apenasSeAutomatico && !premioRow?.entrega_automatico) {
+        return false;
+      }
+
+      const cliente = await this.buscarClientePorCpf(userId, premioCliente.cpf_cliente);
+      if (!cliente || !cliente.telefone) {
+        throw new Error('Cliente não encontrado ou sem telefone');
+      }
+
+      let mensagem = mensagemPersonalizada;
+      if (!mensagem) {
+        const config = await this.configModel.getOrCreateDefault(userId);
+        if (premioRow) {
+          mensagem = this.processarTemplateEntrega(
+            config.template_mensagem_entrega || this.getTemplateEntregaPadrao(),
+            cliente.nome || 'Cliente',
+            premioRow,
+            premioCliente.codigo_voucher,
+            premioCliente.data_validade ? new Date(premioCliente.data_validade) : null
+          );
+        } else {
+          mensagem = "Você recebeu um prêmio!";
+        }
+      }
+
+      // Send via WhatsApp
+      const whatsappManager = WhatsAppManager.getInstance();
+      const whatsappService = whatsappManager.getServiceSync(userId);
+
+      if (whatsappService && whatsappService.isReady()) {
+        await whatsappService.sendMessage(cliente.telefone, mensagem);
+
+        // Log notification
+        await this.notificacaoModel.create({
+          user_id: userId,
+          cpf_cliente: premioCliente.cpf_cliente,
+          pedido_id: null,
+          regra_id: null,
+          data_venda: new Date(), // Delivery moment as reference
+          tipo_notificacao: 'ENTREGA',
+          premio_id: premioCliente.premio_id,
+          mensagem_enviada: mensagem,
+          enviado_whatsapp: true,
+          data_envio: new Date(),
+          erro: null,
+        });
+
+        logger.info(`Notificação de entrega de prêmio enviada para cliente ${premioCliente.cpf_cliente}`);
+        if (options?.marcarDataEntrega) {
+          await this.premioClienteModel.updateAutomacao(premioClienteId, {
+            data_entrega: new Date(),
+          });
+        }
+        return true;
+      } else {
+        throw new Error('WhatsApp não está pronto');
+      }
+    } catch (error: any) {
+      logger.error(`Erro ao enviar notificação de entrega de prêmio: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Fallback automático: mensagem de conquista quando não há voucher para entrega automática.
+   * Cria ou reutiliza linha em fidelizacao_notificacoes; grava conquista_notificacao_id em premios_clientes.
+   * Reenvia se a notificação existir mas não tiver sido enviada ao WhatsApp.
+   */
+  async enviarOuRetentarConquistaFallback(
+    userId: number,
+    pc: PremioCliente,
+    premio: Premio,
+    config: FidelizacaoConfig
+  ): Promise<void> {
+    const cliente = await this.buscarClientePorCpf(userId, pc.cpf_cliente);
+    if (!cliente || !cliente.telefone) {
+      logger.warn(
+        `[ConquistaFallback] Cliente sem telefone (premio_cliente ${pc.id}, CPF ${pc.cpf_cliente})`
+      );
+      return;
+    }
+
+    const mensagemBase = this.processarTemplateConquista(
+      config.template_mensagem_conquista || this.getTemplateConquistaPadrao(),
+      cliente.nome || 'Cliente',
+      premio
+    );
+
+    let notif = pc.conquista_notificacao_id
+      ? await this.notificacaoModel.findById(pc.conquista_notificacao_id)
+      : null;
+
+    if (pc.conquista_notificacao_id && !notif) {
+      await this.premioClienteModel.updateAutomacao(pc.id, { conquista_notificacao_id: null });
+    }
+
+    if (notif) {
+      if (notif.user_id !== userId) {
+        logger.warn(`[ConquistaFallback] Notificação ${notif.id} não pertence ao user ${userId}`);
+        return;
+      }
+      if (notif.enviado_whatsapp) {
+        return;
+      }
+
+      const mensagem = notif.mensagem_enviada || mensagemBase;
+
+      if (config.simulacao) {
+        logger.info(
+          `[SIMULAÇÃO] Retentativa conquista fallback premio_cliente ${pc.id} (notif ${notif.id})`
+        );
+        return;
+      }
+
+      const whatsappManager = WhatsAppManager.getInstance();
+      const whatsappService = whatsappManager.getServiceSync(userId);
+
+      try {
+        if (whatsappService && whatsappService.isReady()) {
+          await whatsappService.sendMessage(cliente.telefone, mensagem);
+          await this.notificacaoModel.update(notif.id, { enviado_whatsapp: true, erro: null });
+          logger.info(`[ConquistaFallback] Reenvio conquista OK premio_cliente ${pc.id} (notif ${notif.id})`);
+        } else {
+          await this.notificacaoModel.update(notif.id, { erro: 'WhatsApp não está pronto' });
+        }
+      } catch (error: any) {
+        const erroMsg = error.message || 'Erro ao enviar WhatsApp';
+        await this.notificacaoModel.update(notif.id, { erro: erroMsg });
+        logger.error(`[ConquistaFallback] Falha reenvio premio_cliente ${pc.id}: ${erroMsg}`);
+      }
+      return;
+    }
+
+    const notificacao = await this.notificacaoModel.create({
+      user_id: userId,
+      cpf_cliente: pc.cpf_cliente,
+      pedido_id: null,
+      regra_id: null,
+      data_venda: new Date(),
+      tipo_notificacao: 'CONQUISTA',
+      premio_id: premio.id,
+      mensagem_enviada: mensagemBase,
+      enviado_whatsapp: false,
+      data_envio: new Date(),
+      erro: null,
+    });
+
+    await this.premioClienteModel.updateAutomacao(pc.id, {
+      conquista_notificacao_id: notificacao.id,
+    });
+
+    if (config.simulacao) {
+      logger.info(
+        `[SIMULAÇÃO] Conquista fallback registrada premio_cliente ${pc.id} (notif ${notificacao.id})`
+      );
+      return;
+    }
+
+    const whatsappManager = WhatsAppManager.getInstance();
+    const whatsappService = whatsappManager.getServiceSync(userId);
+
+    try {
+      if (whatsappService && whatsappService.isReady()) {
+        await whatsappService.sendMessage(cliente.telefone, mensagemBase);
+        await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true, erro: null });
+        logger.info(
+          `[ConquistaFallback] Conquista fallback enviada premio_cliente ${pc.id} (notif ${notificacao.id})`
+        );
+      } else {
+        await this.notificacaoModel.update(notificacao.id, { erro: 'WhatsApp não está pronto' });
+      }
+    } catch (error: any) {
+      const erroMsg = error.message || 'Erro ao enviar WhatsApp';
+      await this.notificacaoModel.update(notificacao.id, { erro: erroMsg });
+      logger.error(`[ConquistaFallback] Falha envio premio_cliente ${pc.id}: ${erroMsg}`);
+    }
+  }
+
+  /**
    * Verifica se deve enviar notificação de progresso baseado na configuração
    */
   private async verificarSeDeveEnviarProgresso(
@@ -216,7 +423,7 @@ export class FidelizacaoNotificacaoService {
     if (config.frequencia_progresso === 'marcos') {
       // Verificar se está em um marco (25%, 50%, 75%, 90%)
       const ultimaNotificacao = await this.notificacaoModel.findUltimaNotificacaoProgresso(userId, cpf);
-      
+
       if (!ultimaNotificacao) {
         // Primeira notificação, enviar se estiver em algum marco
         return this.estaEmMarco(maiorPercentual);
@@ -238,7 +445,7 @@ export class FidelizacaoNotificacaoService {
 
     if (config.frequencia_progresso === 'mudanca_significativa') {
       const ultimaNotificacao = await this.notificacaoModel.findUltimaNotificacaoProgresso(userId, cpf);
-      
+
       if (!ultimaNotificacao) {
         // Primeira notificação, enviar
         return true;
@@ -249,7 +456,7 @@ export class FidelizacaoNotificacaoService {
       // Por enquanto, vamos enviar apenas se passou muito tempo desde a última notificação
       // OU se o percentual atual é muito alto (próximo de conquistar)
       const horasDesdeUltimaNotificacao = (new Date().getTime() - ultimaNotificacao.data_envio.getTime()) / (1000 * 60 * 60);
-      
+
       // Se passou mais de 7 dias, enviar
       if (horasDesdeUltimaNotificacao > 168) {
         return true;
@@ -326,26 +533,23 @@ export class FidelizacaoNotificacaoService {
     if (!nomeCompleto || nomeCompleto.trim() === '') {
       return 'Cliente';
     }
-    
+
     const partes = nomeCompleto.trim().split(/\s+/);
     return partes[0] || 'Cliente';
   }
 
   /**
-   * Processa template de mensagem de conquista
+   * Processa template de mensagem de conquista.
+   * {data_validade} vira "Válido até dd/mm/aaaa" (calculado a partir de validade_dias).
    */
   private processarTemplateConquista(template: string, nome: string, premio: Premio): string {
     let mensagem = template;
 
-    // Extrair primeiro nome
     const primeiroNome = this.extrairPrimeiroNome(nome);
-
-    // Substituir variáveis
     mensagem = mensagem.replace(/{nome}/g, nome);
     mensagem = mensagem.replace(/{primeiro_nome}/g, primeiroNome);
     mensagem = mensagem.replace(/{descricao_premio}/g, premio.descricao);
 
-    // Data de validade
     if (premio.validade_dias) {
       const dataValidade = new Date();
       dataValidade.setDate(dataValidade.getDate() + premio.validade_dias);
@@ -357,10 +561,76 @@ export class FidelizacaoNotificacaoService {
       mensagem = mensagem.replace(/{validade_dias}/g, '');
     }
 
-    // Limpar linhas vazias extras
     mensagem = mensagem.replace(/\n{3,}/g, '\n\n');
-
     return mensagem.trim();
+  }
+
+  /**
+   * Processa template de mensagem de entrega (voucher).
+   * {data_validade} = só a data do voucher em pt-BR (sem prefixo — o template pode adicionar "Válido até:").
+   * {voucher_codigo} = código do voucher.
+   */
+  private processarTemplateEntrega(
+    template: string,
+    nome: string,
+    premio: Premio,
+    codigoVoucher: string | null,
+    dataValidade: Date | null
+  ): string {
+    let mensagem = template;
+
+    const primeiroNome = this.extrairPrimeiroNome(nome);
+    mensagem = mensagem.replace(/{nome}/g, nome);
+    mensagem = mensagem.replace(/{primeiro_nome}/g, primeiroNome);
+    mensagem = mensagem.replace(/{descricao_premio}/g, premio.descricao);
+
+    if (premio.validade_dias) {
+      mensagem = mensagem.replace(/{validade_dias}/g, String(premio.validade_dias));
+    } else {
+      mensagem = mensagem.replace(/{validade_dias}/g, '');
+    }
+
+    const dataFmt = dataValidade
+      ? dataValidade.toLocaleDateString('pt-BR')
+      : '';
+    mensagem = mensagem.replace(/{data_validade}/g, dataFmt);
+
+    mensagem = mensagem.replace(/{voucher_codigo}/g, codigoVoucher || '');
+
+    mensagem = mensagem.replace(/\n{3,}/g, '\n\n');
+    return mensagem.trim();
+  }
+
+  /**
+   * Gera uma barra de progresso com emojis
+   */
+  private gerarBarraEmojis(atual: number, objetivo: number): string {
+    if (!objetivo || objetivo <= 0) return '';
+    const tamanhoBarra = 10;
+    const preenchidos = Math.min(tamanhoBarra, Math.floor((atual / objetivo) * tamanhoBarra));
+    const vazios = tamanhoBarra - preenchidos;
+    return '✅'.repeat(preenchidos) + '⬜'.repeat(vazios);
+  }
+
+  /**
+   * Gera o texto de "faltam X" com singular/plural correto
+   */
+  private getFaltamTexto(faltam: number, unidade: string): string {
+    if (faltam <= 0) return `Você já pode resgatar seu prêmio!`;
+    const termo = faltam === 1 ? 'Falta apenas' : 'Faltam apenas';
+
+    let unidadeTexto = unidade;
+    if (faltam > 1) {
+      if (unidade.endsWith('m')) {
+        unidadeTexto = unidade.slice(0, -1) + 'ns';
+      } else if (unidade.endsWith('ão')) {
+        unidadeTexto = unidade.slice(0, -2) + 'ões';
+      } else {
+        unidadeTexto = `${unidade}s`;
+      }
+    }
+
+    return `${termo} ${faltam} ${unidadeTexto}`;
   }
 
   /**
@@ -377,26 +647,25 @@ export class FidelizacaoNotificacaoService {
   ): string {
     let mensagem = template;
 
-    // Substituir variáveis de lavagem
-    mensagem = mensagem.replace(/{lavagens_atual}/g, String(saldos.lavagens.atual));
-    mensagem = mensagem.replace(/{lavagens_objetivo}/g, String(saldos.lavagens.proximoObjetivo || 0));
-    mensagem = mensagem.replace(/{lavagens_percentual}/g, String(this.calcularPercentual(saldos.lavagens)));
-    mensagem = mensagem.replace(/{lavagens_faltam}/g, String(saldos.lavagens.faltam));
-    mensagem = mensagem.replace(/{lavagens_proximo_premio}/g, saldos.lavagens.proximoPremio || 'Nenhum prêmio disponível');
+    // Utilitário para substituição em massa por categoria
+    const substituirCategoria = (prefixo: string, saldo: SaldoFidelidade, unidade: string) => {
+      const atual = saldo.atual;
+      const objetivo = saldo.proximoObjetivo || 0;
+      const faltam = saldo.faltam;
+      const percentual = this.calcularPercentual(saldo);
 
-    // Substituir variáveis de secagem
-    mensagem = mensagem.replace(/{secagens_atual}/g, String(saldos.secagens.atual));
-    mensagem = mensagem.replace(/{secagens_objetivo}/g, String(saldos.secagens.proximoObjetivo || 0));
-    mensagem = mensagem.replace(/{secagens_percentual}/g, String(this.calcularPercentual(saldos.secagens)));
-    mensagem = mensagem.replace(/{secagens_faltam}/g, String(saldos.secagens.faltam));
-    mensagem = mensagem.replace(/{secagens_proximo_premio}/g, saldos.secagens.proximoPremio || 'Nenhum prêmio disponível');
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_atual}`, 'g'), String(atual));
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_objetivo}`, 'g'), String(objetivo));
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_percentual}`, 'g'), String(percentual));
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_faltam}`, 'g'), String(faltam));
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_proximo_premio}`, 'g'), saldo.proximoPremio || 'Prêmio Indisponível');
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_barra}`, 'g'), this.gerarBarraEmojis(atual, objetivo));
+      mensagem = mensagem.replace(new RegExp(`{${prefixo}_faltam_texto}`, 'g'), this.getFaltamTexto(faltam, unidade));
+    };
 
-    // Substituir variáveis de total
-    mensagem = mensagem.replace(/{total_atual}/g, String(saldos.total.atual));
-    mensagem = mensagem.replace(/{total_objetivo}/g, String(saldos.total.proximoObjetivo || 0));
-    mensagem = mensagem.replace(/{total_percentual}/g, String(this.calcularPercentual(saldos.total)));
-    mensagem = mensagem.replace(/{total_faltam}/g, String(saldos.total.faltam));
-    mensagem = mensagem.replace(/{total_proximo_premio}/g, saldos.total.proximoPremio || 'Nenhum prêmio disponível');
+    substituirCategoria('lavagens', saldos.lavagens, 'lavagem');
+    substituirCategoria('secagens', saldos.secagens, 'secagem');
+    substituirCategoria('total', saldos.total, 'utilização');
 
     // Extrair primeiro nome
     const primeiroNome = this.extrairPrimeiroNome(nome);
@@ -426,19 +695,50 @@ Você conquistou um novo prêmio:
 Continue utilizando nossos serviços para ganhar mais prêmios!`;
   }
 
+  /** Padrão apenas quando template_mensagem_entrega na config está vazio (não reutiliza texto de conquista). */
+  private getTemplateEntregaPadrao(): string {
+    return `Olá, {nome}!
+
+Segue a entrega do seu prêmio: {descricao_premio}
+
+{data_validade}
+
+Use o código e a validade informados abaixo ao utilizar o voucher.`;
+  }
+
+  /**
+   * Após falha no envio da mensagem de entrega (ou erro equivalente), dispara conquista com template da tabela.
+   */
+  async dispararConquistaAposFalhaEntrega(userId: number, premioClienteId: number): Promise<void> {
+    const config = await this.configModel.getOrCreateDefault(userId);
+    if (!config.notificar_conquistas) {
+      return;
+    }
+    const pc = await this.premioClienteModel.findById(premioClienteId);
+    if (!pc) {
+      return;
+    }
+    const premio = await this.premioModel.findById(pc.premio_id);
+    if (!premio) {
+      return;
+    }
+    await this.enviarOuRetentarConquistaFallback(userId, pc, premio, config);
+  }
+
   /**
    * Template padrão de progresso
    */
   private getTemplateProgressoPadrao(): string {
-    return `Olá, {nome}! 👋
+    return `Olá, {primeiro_nome}! 👋
+Veja seu progresso na fidelidade:
 
-Seu progresso na fidelidade:
-• Lavagens: {lavagens_atual}/{lavagens_objetivo} → {lavagens_percentual}% completo
-• Secagens: {secagens_atual}/{secagens_objetivo} → {secagens_percentual}% completo
-• Total: {total_atual}/{total_objetivo} → {total_percentual}% completo
+Prêmio: {lavagens_proximo_premio}
+{lavagens_barra}
+• {lavagens_faltam_texto}
 
-Próximo prêmio: {lavagens_proximo_premio}
-Faltam apenas {lavagens_faltam} utilizações!
+Prêmio: {secagens_proximo_premio}
+{secagens_barra}
+• {secagens_faltam_texto}
 
 Continue assim! 🚀`;
   }
@@ -450,10 +750,11 @@ Continue assim! 🚀`;
   async enviarNotificacaoProgressoPorPedido(
     userId: number,
     cpf: string,
-    pedidoId: number
+    pedidoId: number,
+    dataVenda: Date // Momento exato da venda para idempotência
   ): Promise<void> {
     const config = await this.configModel.getOrCreateDefault(userId);
-    
+
     if (!config.notificar_progresso) {
       return;
     }
@@ -472,13 +773,15 @@ Continue assim! 🚀`;
         saldos
       );
 
-      // Salvar no histórico com pedido_id
+      // Salvar no histórico com pedido_id e data_venda
       const notificacao = await this.notificacaoModel.create({
         user_id: userId,
         cpf_cliente: cpf,
-        pedido_id: pedidoId, // Associar ao pedido
+        pedido_id: pedidoId,
+        data_venda: dataVenda,
         tipo_notificacao: 'PROGRESSO',
         premio_id: null,
+        regra_id: null,
         mensagem_enviada: mensagem,
         enviado_whatsapp: false,
         data_envio: new Date(),
@@ -507,6 +810,10 @@ Continue assim! 🚀`;
         logger.info(`[SIMULAÇÃO] Notificação de progresso processada para pedido ${pedidoId} (cliente ${cpf})`);
       }
     } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('Duplicate entry')) {
+        logger.info(`Notificação de PROGRESSO ignorada por duplicidade (Pedido ${pedidoId}, Cliente ${cpf}, Momento ${dataVenda.toISOString()})`);
+        return;
+      }
       logger.error(`Erro ao processar notificação de progresso para pedido ${pedidoId}: ${error.message}`);
     }
   }
@@ -519,10 +826,11 @@ Continue assim! 🚀`;
     userId: number,
     cpf: string,
     pedidoId: number,
+    dataVenda: Date, // Momento exato da venda para idempotência
     premios: PremioCliente[]
   ): Promise<void> {
     const config = await this.configModel.getOrCreateDefault(userId);
-    
+
     if (!config.notificar_conquistas || premios.length === 0) {
       return;
     }
@@ -539,6 +847,9 @@ Continue assim! 🚀`;
         if (!premio) {
           continue;
         }
+        if (premio.entrega_automatico) {
+          continue;
+        }
 
         const mensagem = this.processarTemplateConquista(
           config.template_mensagem_conquista || this.getTemplateConquistaPadrao(),
@@ -546,13 +857,15 @@ Continue assim! 🚀`;
           premio
         );
 
-        // Salvar no histórico com pedido_id
+        // Salvar no histórico com pedido_id e data_venda
         const notificacao = await this.notificacaoModel.create({
           user_id: userId,
           cpf_cliente: cpf,
-          pedido_id: pedidoId, // Associar ao pedido
+          pedido_id: pedidoId,
+          data_venda: dataVenda,
           tipo_notificacao: 'CONQUISTA',
           premio_id: premio.id,
+          regra_id: null,
           mensagem_enviada: mensagem,
           enviado_whatsapp: false,
           data_envio: new Date(),
@@ -581,6 +894,10 @@ Continue assim! 🚀`;
           logger.info(`[SIMULAÇÃO] Notificação de conquista processada para pedido ${pedidoId} (cliente ${cpf}, prêmio: ${premio.descricao})`);
         }
       } catch (error: any) {
+        if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('Duplicate entry')) {
+          logger.info(`Notificação de CONQUISTA ignorada por duplicidade (Prêmio ${premioConcedido.premio_id}, Cliente ${cpf})`);
+          continue;
+        }
         logger.error(`Erro ao processar notificação de conquista para pedido ${pedidoId}: ${error.message}`);
       }
     }

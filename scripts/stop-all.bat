@@ -6,9 +6,9 @@ REM ============================================
 echo [INFO] Parando servicos...
 echo.
 
-REM Parar Backend (porta 3301)
-echo [INFO] Parando Backend (porta 3301)...
-powershell -Command "$output = netstat -ano | Select-String '3301' | Select-String 'LISTENING'; if ($output) { $processId = ($output -split '\s+')[-1]; Write-Host '[INFO] Encontrado PID:' $processId; Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue; Write-Host '[OK] Backend parado (PID:' $processId ')' } else { Write-Host '[AVISO] Backend nao encontrado na porta 3301' }"
+REM Parar Backend (porta 3302)
+echo [INFO] Parando Backend (porta 3302)...
+powershell -Command "$output = netstat -ano | Select-String '3302' | Select-String 'LISTENING'; if ($output) { $processId = ($output -split '\s+')[-1]; Write-Host '[INFO] Encontrado PID:' $processId; Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue; Write-Host '[OK] Backend parado (PID:' $processId ')' } else { Write-Host '[AVISO] Backend nao encontrado na porta 3302' }"
 echo.
 
 REM Parar Frontend (porta 3300)

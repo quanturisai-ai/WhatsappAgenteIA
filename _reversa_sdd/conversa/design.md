@@ -69,7 +69,7 @@
 ## Fluxos Alternativos
 
 - **`#contatoia` na mensagem do cliente:** histórico de mensagens não é incluído no contexto enviado ao LLM — modo "fresh context" 🟢
-- **`[CONTATO_PROATIVO:numero]`:** inicia nova conversa ou envia mensagem para número externo não previamente em contato 🟡
+- **`[CONTATO_PROATIVO:{...}]`:** envia mensagem diretamente ao número externo via `whatsappService.sendMessage()` — **não** cria uma nova conversa; aceita formatos `[CONTATO_PROATIVO: {...}]`, `["CONTATO_PROATIVO": {...}]` e variantes 🟢
 - **Conversa `finished` recebe nova mensagem:** `processIncomingMessage()` reabre a conversa (UPDATE status `in_progress`) antes de processar 🟢
 - **`needs_intervention=true`:** IA pode continuar respondendo mesmo com flag ativa — a flag apenas sinaliza para o painel humano, não bloqueia a IA 🟡
 
@@ -90,7 +90,7 @@
 | `auto_responding=null` no banco é tratado como `true` | `conversation.service.ts:isAutoResponding` | 🟢 |
 | Comandos especiais embutidos no texto da IA (inline commands) | `conversation.service.ts:extractAlertCommand, extractMediaCommands` | 🟢 |
 | LEFT JOIN com vm_lav_clientes via função SQL normaliza_telefone | `conversation.model.ts:findById` | 🟢 |
-| Status `paused` no ENUM sem uso identificado no código | `state-machines.md` (LACUNA) | 🔴 |
+| Status `paused` no ENUM: **intenção confirmada** — deve ser usado quando um atendente humano assume a conversa (takeover), pausando a IA. Porém o código atual não faz UPDATE para `paused` na operação de takeover — apenas seta `auto_responding=false`. Transição não implementada | `state-machines.md` (confirmado pelo usuário) | 🟡 |
 | `finalizeOldConversations` com max_age_hours configurável via AgentConfig | `conversation.service.ts` | 🟡 |
 
 ## Estado Interno
@@ -107,7 +107,7 @@ Stateless no nível do service — todo estado persiste no banco. O `WhatsAppSer
 
 ## Riscos e Lacunas
 
-- 🔴 Estado `paused` do ENUM `conversations.status` não tem gatilhos de entrada/saída identificados no código
-- 🟡 `[CONTATO_PROATIVO:numero]` — comportamento exato (cria conversa? apenas envia mensagem?) não confirmado pela leitura do code-analysis
+- 🔴 Estado `paused` do ENUM `conversations.status` não tem gatilhos de entrada/saída identificados no código — requer validação humana (ver `questions.md#pergunta-1`)
+- 🟢 `[CONTATO_PROATIVO:{...}]` — envia mensagem direta via `sendMessage()`, não cria conversa; confirmado em `conversation.service.ts:211-234`
 - 🟡 O valor padrão de `max_age_hours` (12h) é configurável mas o mecanismo de configuração depende de `AgentConfig` — se não configurado, pode usar hardcoded
-- 🟡 Mídias obrigatórias enviadas antes da IA responder — lógica exata de "quando enviar" (primeira mensagem? toda mensagem?) não confirmada
+- 🟢 Mídias obrigatórias: enviadas na 1ª mensagem do cliente OU se penúltima mensagem foi há mais de `max_age_hours`; controlado por `shouldSend` em `conversation.service.ts:473-498`

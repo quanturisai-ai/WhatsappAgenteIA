@@ -1,0 +1,432 @@
+{
+  "cpf": "321.809.458-50",
+  "summary": [
+    {
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "qtd": "27"
+    },
+    {
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "qtd": "27"
+    },
+    {
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "Olá, Flavio! 👋\nVeja seu progresso na fidelidade:\n\nPrêmio: Um voucher de lavagem 100% de desconto\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 10 lavagems\n\nPrêmio: Dois Vouchers de secagem 100% de desconto\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 10 secagems\n\nContinue assim! 🚀",
+      "qtd": "17"
+    },
+    {
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "Olá, Flavio! 👋\nVeja seu progresso no nosso programa de prêmios:\n\nPrêmio 1: Um voucher de lavagem 100% de desconto\n✅✅✅✅✅⬜⬜⬜⬜⬜\n• Faltam apenas 5 lavagens\n\nPrêmio 2: Dois Vouchers de secagem 100% de desconto\n✅✅⬜⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 8 secagens\n\nContinue assim! 🚀",
+      "qtd": "3"
+    },
+    {
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "Olá, Flavio! 👋\nVeja seu progresso no nosso programa de prêmios:\n\nPrêmio 1: Um voucher de lavagem 100% de desconto\n✅✅✅⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 7 lavagens\n\nPrêmio 2: Dois Vouchers de secagem 100% de desconto\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 10 secagens\n\nContinue assim! 🚀",
+      "qtd": "1"
+    }
+  ],
+  "details": [
+    {
+      "id": 5849,
+      "pedido_id": 7159,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "Olá, Flavio! 👋\nVeja seu progresso no nosso programa de prêmios:\n\nPrêmio 1: Um voucher de lavagem 100% de desconto\n✅✅✅✅✅⬜⬜⬜⬜⬜\n• Faltam apenas 5 lavagens\n\nPrêmio 2: Dois Vouchers de secagem 100% de desconto\n✅✅⬜⬜⬜⬜⬜⬜⬜⬜\n• Faltam apenas 8 secagens\n\nContinue assim! 🚀",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2026-02-16T14:30:36.000Z"
+    },
+    {
+      "id": 5848,
+      "pedido_id": 2010,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-09T20:12:44.000Z"
+    },
+    {
+      "id": 5847,
+      "pedido_id": 2010,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-09T20:12:44.000Z"
+    },
+    {
+      "id": 5846,
+      "pedido_id": 2009,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-09T20:14:21.000Z"
+    },
+    {
+      "id": 5845,
+      "pedido_id": 2009,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-09T20:14:21.000Z"
+    },
+    {
+      "id": 5844,
+      "pedido_id": 1759,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5843,
+      "pedido_id": 1759,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5842,
+      "pedido_id": 1761,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5841,
+      "pedido_id": 1761,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5840,
+      "pedido_id": 1760,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5839,
+      "pedido_id": 1760,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-27T16:47:09.000Z"
+    },
+    {
+      "id": 5838,
+      "pedido_id": 1655,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5837,
+      "pedido_id": 1655,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5836,
+      "pedido_id": 1656,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5835,
+      "pedido_id": 1656,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5834,
+      "pedido_id": 1657,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5833,
+      "pedido_id": 1657,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-11-30T22:28:32.000Z"
+    },
+    {
+      "id": 5832,
+      "pedido_id": 1453,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-10T23:50:01.000Z"
+    },
+    {
+      "id": 5831,
+      "pedido_id": 1453,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-10T23:50:01.000Z"
+    },
+    {
+      "id": 5830,
+      "pedido_id": 1452,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-10T23:50:01.000Z"
+    },
+    {
+      "id": 5829,
+      "pedido_id": 1452,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-10T23:50:01.000Z"
+    },
+    {
+      "id": 5828,
+      "pedido_id": 1451,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-11T00:20:02.000Z"
+    },
+    {
+      "id": 5827,
+      "pedido_id": 1451,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-11T00:20:02.000Z"
+    },
+    {
+      "id": 5826,
+      "pedido_id": 1226,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-18T17:18:34.000Z"
+    },
+    {
+      "id": 5825,
+      "pedido_id": 1226,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-18T17:18:34.000Z"
+    },
+    {
+      "id": 5824,
+      "pedido_id": 1225,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-18T17:18:34.000Z"
+    },
+    {
+      "id": 5823,
+      "pedido_id": 1225,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:56.000Z",
+      "data_venda": "2025-12-18T17:18:34.000Z"
+    },
+    {
+      "id": 5822,
+      "pedido_id": 1223,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-18T17:52:18.000Z"
+    },
+    {
+      "id": 5821,
+      "pedido_id": 1223,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-18T17:52:18.000Z"
+    },
+    {
+      "id": 5820,
+      "pedido_id": 1224,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-18T17:52:18.000Z"
+    },
+    {
+      "id": 5819,
+      "pedido_id": 1224,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-18T17:52:18.000Z"
+    },
+    {
+      "id": 5818,
+      "pedido_id": 1173,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-20T15:50:12.000Z"
+    },
+    {
+      "id": 5817,
+      "pedido_id": 1173,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-20T15:50:12.000Z"
+    },
+    {
+      "id": 5816,
+      "pedido_id": 1169,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-20T16:20:35.000Z"
+    },
+    {
+      "id": 5815,
+      "pedido_id": 1169,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2025-12-20T16:20:35.000Z"
+    },
+    {
+      "id": 5814,
+      "pedido_id": 714,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5813,
+      "pedido_id": 714,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5812,
+      "pedido_id": 715,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5811,
+      "pedido_id": 715,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5810,
+      "pedido_id": 716,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5809,
+      "pedido_id": 716,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-09T16:38:56.000Z"
+    },
+    {
+      "id": 5808,
+      "pedido_id": 457,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-21T23:58:21.000Z"
+    },
+    {
+      "id": 5807,
+      "pedido_id": 457,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-21T23:58:21.000Z"
+    },
+    {
+      "id": 5806,
+      "pedido_id": 456,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-21T23:58:21.000Z"
+    },
+    {
+      "id": 5805,
+      "pedido_id": 456,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-01-21T23:58:21.000Z"
+    },
+    {
+      "id": 5804,
+      "pedido_id": 7157,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-02-16T13:52:41.000Z"
+    },
+    {
+      "id": 5803,
+      "pedido_id": 7157,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-02-16T13:52:41.000Z"
+    },
+    {
+      "id": 5802,
+      "pedido_id": 7156,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-02-16T13:52:41.000Z"
+    },
+    {
+      "id": 5801,
+      "pedido_id": 7156,
+      "tipo_notificacao": "PROGRESSO",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-02-16T13:52:41.000Z"
+    },
+    {
+      "id": 5800,
+      "pedido_id": 7155,
+      "tipo_notificacao": "CONQUISTA",
+      "mensagem_enviada": "IGNORADO_DEDUPLICACAO_LOTE",
+      "data_envio": "2026-02-16T17:03:55.000Z",
+      "data_venda": "2026-02-16T13:52:41.000Z"
+    }
+  ]
+}

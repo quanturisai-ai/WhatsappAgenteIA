@@ -24,12 +24,12 @@ Módulo central do sistema. Gerencia o ciclo de vida de conversas entre o agente
 - `auto_responding` é `true` por padrão — mesmo quando o campo é `null` no banco, a IA responde 🟢
 - Quando IA está ativa (`auto_responding=true`) e uma mensagem chega, o pipeline completo é executado 🟢
 - O texto `#contatoia` na mensagem do cliente omite o histórico ao chamar o LLM (modo "fresh context") 🟢
-- Comandos especiais `[ALERTA_ATENDENTE:msg]`, `[ENVIAR_MIDIA:id]`, `[CONTATO_PROATIVO:numero]` são extraídos e removidos da resposta antes de enviar ao cliente 🟢
+- Comandos especiais `[ALERTAR_ATENDENTE:msg]`, `[ENVIAR_MIDIA:id]`, `[CONTATO_PROATIVO:{...}]` são extraídos e removidos da resposta antes de enviar ao cliente 🟢
 - Conversas inativas por mais de `max_age_hours` (padrão: 12h) são finalizadas automaticamente 🟢
 - `findById` faz LEFT JOIN com `vm_lav_clientes` via função SQL `normaliza_telefone()` para enriquecer dados do contato 🟢
 - `status=finished` reseta `auto_responding=true` para que a IA retome na próxima mensagem do contato 🟢
 - Uma conversa `finished` reabre automaticamente (`in_progress`) ao receber nova mensagem 🟢
-- O estado `paused` existe no ENUM `conversations.status` mas sem transições identificadas no código atual 🔴
+- O estado `paused` existe no ENUM e é **intencionalmente reservado** para when um atendente humano assume a conversa (takeover); a implementação atual seta apenas `auto_responding=false` sem mudar o status — transição `in_progress → paused` é um gap de implementação no legado 🟡
 
 ## Requisitos Funcionais
 
@@ -48,7 +48,7 @@ Módulo central do sistema. Gerencia o ciclo de vida de conversas entre o agente
 | RF-11 | Enviar mídia manualmente pelo operador | Should | POST /send-media envia arquivo de mídia via WhatsApp |
 | RF-12 | Criar conversa manualmente | Could | POST / cria conversa sem mensagem prévia |
 | RF-13 | Processar mensagem recebida com pipeline de IA | Must | `processIncomingMessage()` executa pipeline completo ao receber mensagem |
-| RF-14 | Interpretar e executar comandos especiais da IA | Must | Comandos `[ALERTA_ATENDENTE]`, `[ENVIAR_MIDIA]`, `[CONTATO_PROATIVO]` são parseados e executados |
+| RF-14 | Interpretar e executar comandos especiais da IA | Must | Comandos `[ALERTAR_ATENDENTE]`, `[ENVIAR_MIDIA]`, `[CONTATO_PROATIVO]` são parseados e executados |
 | RF-15 | Finalizar conversas inativas automaticamente | Should | `finalizeOldConversations()` encerra conversas sem atividade por >12h |
 
 ## Requisitos Não Funcionais
@@ -78,7 +78,7 @@ Dado que uma mensagem chega com auto_responding=true
 Quando processIncomingMessage() é executado
 Então a IA gera resposta via RAG/LLM e envia ao contato no WhatsApp
 
-Dado que a resposta da IA contém [ALERTA_ATENDENTE:mensagem]
+Dado que a resposta da IA contém [ALERTAR_ATENDENTE:mensagem]
 Quando o pipeline de conversa processa a resposta
 Então o alerta é enviado ao atendente e o comando é removido do texto enviado ao cliente
 

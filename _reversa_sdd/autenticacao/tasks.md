@@ -56,10 +56,11 @@
   - Critério de pronto: inspeção do JSON de resposta não contém o campo
   - Confiança: 🟢
 
-- [ ] T-10 — Configurar `JWT_SECRET` obrigatório em produção — remover ou alertar sobre o fallback `'default-secret'`
+- [ ] T-10 — Configurar `JWT_SECRET` obrigatório em produção — **app deve falhar no startup** se `JWT_SECRET` não estiver definido (remoção do fallback `'default-secret'`); melhor prática confirmada pelo usuário
   - Origem no legado: `backend/src/services/auth.service.ts:169`
-  - Critério de pronto: app não inicia sem `JWT_SECRET` definido (ou emite warning crítico)
-  - Confiança: 🔴 (decisão de implementação pendente)
+  - Critério de pronto: `process.env.JWT_SECRET` ausente → `throw Error` ou `process.exit(1)` antes de registrar rotas
+  - Prioridade: **Must** (confirmado)
+  - Confiança: 🟢
 
 ## Tarefas de Teste
 

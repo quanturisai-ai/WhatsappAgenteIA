@@ -35,7 +35,7 @@ function Stop-ProcessOnPort {
 }
 
 # Parar serviços
-Stop-ProcessOnPort -Port 3301 -ServiceName "Backend"
+Stop-ProcessOnPort -Port 3302 -ServiceName "Backend"
 Write-Host ""
 
 Stop-ProcessOnPort -Port 3300 -ServiceName "Frontend"

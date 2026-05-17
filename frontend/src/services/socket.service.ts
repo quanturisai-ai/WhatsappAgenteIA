@@ -1,16 +1,20 @@
 import { io, Socket } from 'socket.io-client';
 
-// Socket.IO precisa apenas do host e porta, não do path /api
-// Remover /api se estiver presente na URL
+// Socket.IO usa window.location.origin para funcionar tanto em localhost
+// quanto quando acessado via rede interna (ex: 192.168.1.5:3300).
+// O Vite proxy redireciona /socket.io para o backend (localhost:3302).
 const getSocketUrl = (): string => {
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3002';
-  // Se a URL termina com /api, remover
-  if (apiUrl.endsWith('/api')) {
-    return apiUrl.slice(0, -4); // Remove '/api'
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  // URL relativa (ex: /api) — usa a origem atual do browser
+  if (apiUrl.startsWith('/') || apiUrl === '') {
+    return window.location.origin;
   }
-  // Se a URL termina com /api/, remover também
+  // URL absoluta legada — remove o sufixo /api
+  if (apiUrl.endsWith('/api')) {
+    return apiUrl.slice(0, -4);
+  }
   if (apiUrl.endsWith('/api/')) {
-    return apiUrl.slice(0, -5); // Remove '/api/'
+    return apiUrl.slice(0, -5);
   }
   return apiUrl;
 };
@@ -35,7 +39,8 @@ class SocketService {
       auth: {
         token,
       },
-      transports: ['websocket', 'polling'],
+      // Polling primeiro, depois upgrade para WebSocket — reduz erro "não conseguiu estabelecer conexão" no carregamento
+      transports: ['polling', 'websocket'],
       // Configurações adicionais para melhor compatibilidade
       reconnection: true,
       reconnectionDelay: 1000,

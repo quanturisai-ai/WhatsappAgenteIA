@@ -22,8 +22,8 @@ Módulo de integração com o sistema externo VM Lavanderia (vmtecnologia.io). A
 - Autenticação usa **Puppeteer** para navegar na tela de login e extrair JWT do localStorage — necessário por causa do captcha 🟢
 - Token JWT renovado automaticamente por `VmLavConnectionManager` 🟢
 - Scheduler sincroniza a cada **10 minutos** — usa `Map<userId, boolean>` para prevenir execuções simultâneas 🟢
-- Constantes hardcoded na integração: `idEmpresa=1737`, `empresaLocalizador='lavateriajdnovomundo'`, `LAVAGEM(id=3837)`, `SECAGEM(id=3838)` 🔴
-- URLs da API são hardcoded (não configuráveis): `apps.vmhub.vmtecnologia.io` 🔴
+- Constantes `idEmpresa`, `empresaLocalizador`, `LAVAGEM(serviceId)`, `SECAGEM(serviceId)` são atualmente hardcoded (`1737`, `lavateriajdnovomundo`, `3837`, `3838`) mas **devem ser configuráveis por usuário/conta** — gap de implementação confirmado pelo usuário; precisam ser adicionadas ao modelo de credenciais VM Lav 🔴 (feature gap)
+- URLs da API são hardcoded (não configuráveis): `apps.vmhub.vmtecnologia.io` — se a VM Lav muda de domínio, exige deploy 🟡
 - Senha é armazenada como **texto plano** no banco (ADR-004 reconhece como risco) 🔴
 - `normaliza_telefone()` é uma função SQL customizada usada para JOIN com conversas 🟢
 
@@ -39,6 +39,7 @@ Módulo de integração com o sistema externo VM Lavanderia (vmtecnologia.io). A
 | RF-06 | Listar clientes sincronizados | Must | GET /api/vmlav/clientes retorna clientes do banco local |
 | RF-07 | Fechar browser Puppeteer | Should | POST /api/vmlav/close-browser encerra Puppeteer manualmente |
 | RF-08 | Sincronização automática | Must | Scheduler executa sync a cada 10min sem intervenção |
+| RF-09 | Configurar identificadores da conta VM Lav | Must | PUT /api/vmlav/credentials deve persistir `idEmpresa`, `empresaLocalizador`, `lavagem_service_id`, `secagem_service_id` por usuário — **feature gap no legado, hardcoded atualmente** |
 
 ## Requisitos Não Funcionais
 

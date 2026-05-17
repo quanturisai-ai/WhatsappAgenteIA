@@ -309,6 +309,136 @@ export async function migrateVmLavTables(): Promise<void> {
       // Não é crítico, apenas logar
     }
 
+    // Adicionar colunas valor_voucher e quantidade_utilizacoes na tabela premios (para geração de voucher via API VM)
+    logger.info('Verificando colunas valor_voucher e quantidade_utilizacoes na tabela premios...');
+    try {
+      const [colsValor] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios' AND COLUMN_NAME = 'valor_voucher'`
+      ) as any[];
+      if (!colsValor || colsValor.length === 0) {
+        logger.info('Adicionando coluna valor_voucher na tabela premios...');
+        await conn.query(
+          `ALTER TABLE premios ADD COLUMN valor_voucher DECIMAL(10,2) NULL 
+           COMMENT 'Valor do voucher em R$ (para geração via API VM)' AFTER validade_dias`
+        );
+        logger.info('✅ Coluna valor_voucher adicionada na tabela premios');
+      }
+      const [colsQtd] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios' AND COLUMN_NAME = 'quantidade_utilizacoes'`
+      ) as any[];
+      if (!colsQtd || colsQtd.length === 0) {
+        logger.info('Adicionando coluna quantidade_utilizacoes na tabela premios...');
+        await conn.query(
+          `ALTER TABLE premios ADD COLUMN quantidade_utilizacoes INT NULL 
+           COMMENT 'Quantidade de utilizações do voucher (para geração via API VM)' AFTER valor_voucher`
+        );
+        logger.info('✅ Coluna quantidade_utilizacoes adicionada na tabela premios');
+      }
+    } catch (error: any) {
+      logger.warn('Erro ao verificar/adicionar colunas valor_voucher/quantidade_utilizacoes: ' + String(error.message));
+    }
+
+    // premios: gerar_automatico, entrega_automatico (voucher/entrega automáticos no ciclo VM)
+    logger.info('Verificando colunas gerar_automatico e entrega_automatico na tabela premios...');
+    try {
+      const [cga] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios' AND COLUMN_NAME = 'gerar_automatico'`
+      ) as any[];
+      if (!cga || cga.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios ADD COLUMN gerar_automatico TINYINT(1) NOT NULL DEFAULT 0 
+           COMMENT 'Se 1, tenta gerar voucher na API VM no ciclo' AFTER quantidade_utilizacoes`
+        );
+        logger.info('✅ Coluna gerar_automatico adicionada em premios');
+      }
+      const [cea] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios' AND COLUMN_NAME = 'entrega_automatico'`
+      ) as any[];
+      if (!cea || cea.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios ADD COLUMN entrega_automatico TINYINT(1) NOT NULL DEFAULT 0 
+           COMMENT 'Se 1, envia só entrega com voucher; se falhar geração, fallback conquista' AFTER gerar_automatico`
+        );
+        logger.info('✅ Coluna entrega_automatico adicionada em premios');
+      }
+    } catch (error: any) {
+      logger.warn('Erro ao verificar/adicionar gerar_automatico/entrega_automatico: ' + String(error.message));
+    }
+
+    // premios_clientes: data_entrega, voucher_tentativa_em, voucher_erro_ultimo, conquista_notificacao_id
+    logger.info('Verificando colunas de automação em premios_clientes...');
+    try {
+      const [cde] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'data_entrega'`
+      ) as any[];
+      if (!cde || cde.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios_clientes ADD COLUMN data_entrega DATETIME NULL 
+           COMMENT 'Data em que a mensagem de entrega automática foi enviada' AFTER observacao`
+        );
+        logger.info('✅ Coluna data_entrega adicionada em premios_clientes');
+      }
+      const [cvt] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'voucher_tentativa_em'`
+      ) as any[];
+      if (!cvt || cvt.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios_clientes ADD COLUMN voucher_tentativa_em DATETIME NULL 
+           COMMENT 'Última tentativa de geração de voucher (backoff)' AFTER data_entrega`
+        );
+        logger.info('✅ Coluna voucher_tentativa_em adicionada em premios_clientes');
+      }
+      const [cve] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'voucher_erro_ultimo'`
+      ) as any[];
+      if (!cve || cve.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios_clientes ADD COLUMN voucher_erro_ultimo TEXT NULL 
+           COMMENT 'Último erro na geração automática do voucher' AFTER voucher_tentativa_em`
+        );
+        logger.info('✅ Coluna voucher_erro_ultimo adicionada em premios_clientes');
+      }
+      const [cni] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'conquista_notificacao_id'`
+      ) as any[];
+      if (!cni || cni.length === 0) {
+        await conn.query(
+          `ALTER TABLE premios_clientes ADD COLUMN conquista_notificacao_id INT NULL 
+           COMMENT 'FK lógica fidelizacao_notificacoes.id (fallback conquista quando voucher falha)' AFTER voucher_erro_ultimo`
+        );
+        logger.info('✅ Coluna conquista_notificacao_id adicionada em premios_clientes');
+      }
+    } catch (error: any) {
+      logger.warn('Erro ao verificar/adicionar colunas em premios_clientes: ' + String(error.message));
+    }
+
+    // fidelizacao_config: template_mensagem_entrega
+    logger.info('Verificando coluna template_mensagem_entrega em fidelizacao_config...');
+    try {
+      const [tme] = await conn.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fidelizacao_config' AND COLUMN_NAME = 'template_mensagem_entrega'`
+      ) as any[];
+      if (!tme || tme.length === 0) {
+        await conn.query(
+          `ALTER TABLE fidelizacao_config ADD COLUMN template_mensagem_entrega TEXT NULL 
+           COMMENT 'Template da mensagem de entrega do voucher (manual e automática)' 
+           AFTER template_mensagem_conquista`
+        );
+        logger.info('✅ Coluna template_mensagem_entrega adicionada em fidelizacao_config');
+      }
+    } catch (error: any) {
+      logger.warn('Erro ao verificar/adicionar template_mensagem_entrega: ' + String(error.message));
+    }
+
     // Executar migration de tabelas de notificações de fidelização
     logger.info('Executando migration: tabelas de notificações de fidelização...');
     try {
@@ -582,6 +712,45 @@ export async function migrateVmLavTables(): Promise<void> {
     } catch (error: any) {
       logger.warn('Erro ao verificar/criar função normaliza_telefone: ' + String(error.message));
       // Não falhar a migração por causa disso
+    }
+
+    // Adicionar colunas de intervalo de automações em fidelizacao_regras_config
+    logger.info('Verificando colunas intervalo_verificacao_minutos e ultima_verificacao_automaticoes em fidelizacao_regras_config...');
+    try {
+      const [tableCheck] = await conn.query(
+        `SELECT TABLE_NAME FROM information_schema.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fidelizacao_regras_config'`
+      ) as any[];
+      if (tableCheck && tableCheck.length > 0) {
+        const [cols] = await conn.query(
+          `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fidelizacao_regras_config' 
+           AND COLUMN_NAME = 'intervalo_verificacao_minutos'`
+        ) as any[];
+        if (!cols || cols.length === 0) {
+          await conn.query(
+            `ALTER TABLE fidelizacao_regras_config
+             ADD COLUMN intervalo_verificacao_minutos INT NOT NULL DEFAULT 60 
+             COMMENT 'Intervalo em minutos entre verificações de automações'`
+          );
+          logger.info('✅ Coluna intervalo_verificacao_minutos adicionada');
+        }
+        const [cols2] = await conn.query(
+          `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fidelizacao_regras_config' 
+           AND COLUMN_NAME = 'ultima_verificacao_automaticoes'`
+        ) as any[];
+        if (!cols2 || cols2.length === 0) {
+          await conn.query(
+            `ALTER TABLE fidelizacao_regras_config
+             ADD COLUMN ultima_verificacao_automaticoes TIMESTAMP NULL 
+             COMMENT 'Última execução do processamento de regras de automação'`
+          );
+          logger.info('✅ Coluna ultima_verificacao_automaticoes adicionada');
+        }
+      }
+    } catch (error: any) {
+      logger.warn('Erro ao adicionar colunas de automações: ' + String(error.message));
     }
 
     // Executar migration para renomear senha_criptografada para senha

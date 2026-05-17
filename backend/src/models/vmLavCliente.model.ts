@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import logger from '../utils/logger';
+import { normalizeCpfToDigits, normalizeCpfColumnSql } from '../utils/cpfUtils';
 
 export interface VmLavCliente {
   id: number;
@@ -57,14 +58,77 @@ export class VmLavClienteModel {
     }
   }
 
-  async findByIdClienteVm(idClienteVm: number, userId: number): Promise<VmLavCliente | null> {
+  async findByCpf(userId: number, cpf: string): Promise<VmLavCliente | null> {
+    const cpfNorm = normalizeCpfToDigits(cpf);
+    if (!cpfNorm) return null;
     const conn = await pool.getConnection();
     try {
+      const cpfCol = normalizeCpfColumnSql('cpf');
       const queryResult = await conn.query(
         `SELECT id, user_id, id_cliente_vm, nome, data_nascimento, cpf, telefone, email, genero, 
          data_cadastro, data_ultima_compra, qtd_compras, valor_total_compras, 
          qtd_compras_90, valor_total_compras_90, qtd_compras_30, valor_total_compras_30, 
          qtd_compras_7, valor_total_compras_7, lavanderia, acoes, created_at, updated_at 
+         FROM vm_lav_clientes WHERE user_id = ? AND ${cpfCol} = ? LIMIT 1`,
+        [userId, cpfNorm]
+      );
+
+      let rows: any[] = [];
+      if (Array.isArray(queryResult)) {
+        rows = Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
+      } else if (queryResult && typeof queryResult === 'object' && 'length' in queryResult) {
+        rows = Array.from(queryResult as any);
+      }
+
+      if (rows && rows.length > 0) {
+        return this.mapRowToCliente(rows[0]);
+      }
+      return null;
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Busca cliente por user_id e telefone, comparando com normaliza_telefone() (mesma lógica do vínculo conversa-cliente).
+   */
+  async findByTelefoneNormalized(userId: number, contactNumber: string): Promise<VmLavCliente | null> {
+    if (!contactNumber || !String(contactNumber).trim()) return null;
+    const conn = await pool.getConnection();
+    try {
+      const queryResult = await conn.query(
+        `SELECT id, user_id, id_cliente_vm, nome, data_nascimento, cpf, telefone, email, genero,
+         data_cadastro, data_ultima_compra, qtd_compras, valor_total_compras,
+         qtd_compras_90, valor_total_compras_90, qtd_compras_30, valor_total_compras_30,
+         qtd_compras_7, valor_total_compras_7, lavanderia, acoes, created_at, updated_at
+         FROM vm_lav_clientes WHERE user_id = ? AND normaliza_telefone(telefone) = normaliza_telefone(?) LIMIT 1`,
+        [userId, contactNumber]
+      );
+
+      let rows: any[] = [];
+      if (Array.isArray(queryResult)) {
+        rows = Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
+      } else if (queryResult && typeof queryResult === 'object' && 'length' in queryResult) {
+        rows = Array.from(queryResult as any);
+      }
+
+      if (rows && rows.length > 0) {
+        return this.mapRowToCliente(rows[0]);
+      }
+      return null;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async findByIdClienteVm(idClienteVm: number, userId: number): Promise<VmLavCliente | null> {
+    const conn = await pool.getConnection();
+    try {
+      const queryResult = await conn.query(
+        `SELECT id, user_id, id_cliente_vm, nome, data_nascimento, cpf, telefone, email, genero,
+         data_cadastro, data_ultima_compra, qtd_compras, valor_total_compras,
+         qtd_compras_90, valor_total_compras_90, qtd_compras_30, valor_total_compras_30,
+         qtd_compras_7, valor_total_compras_7, lavanderia, acoes, created_at, updated_at
          FROM vm_lav_clientes WHERE id_cliente_vm = ? AND user_id = ?`,
         [idClienteVm, userId]
       );
@@ -135,228 +199,78 @@ export class VmLavClienteModel {
   }
 
   async searchByUserId(
-    userId: number, 
-    searchTerm: string, 
-    page: number, 
+    userId: number,
+    searchTerm: string,
+    page: number,
     limit: number,
     orderBy?: string,
     orderDir?: 'ASC' | 'DESC'
   ): Promise<{ clientes: (VmLavCliente & { total_lavagens: number; total_secagens: number })[]; total: number }> {
     const conn = await pool.getConnection();
+    const orderByMap: Record<string, string> = {
+      'nome': 'c.nome',
+      'cpf': 'c.cpf',
+      'telefone': 'c.telefone',
+      'email': 'c.email',
+      'data_cadastro': 'c.data_cadastro',
+      'data_ultima_compra': 'c.data_ultima_compra',
+      'qtd_compras': 'c.qtd_compras',
+      'total_lavagens': 'total_lavagens',
+      'total_secagens': 'total_secagens',
+    };
+
     try {
       const offset = (page - 1) * limit;
       const searchPattern = `%${searchTerm}%`;
-
-      // Mapear campos de ordenação para colunas válidas
-      const orderByMap: Record<string, string> = {
-        'nome': 'c.nome',
-        'cpf': 'c.cpf',
-        'telefone': 'c.telefone',
-        'email': 'c.email',
-        'data_cadastro': 'c.data_cadastro',
-        'data_ultima_compra': 'c.data_ultima_compra',
-        'qtd_compras': 'c.qtd_compras',
-        'total_lavagens': 'total_lavagens',
-        'total_secagens': 'total_secagens',
-      };
-      
       const orderByField = orderBy && orderByMap[orderBy] ? orderByMap[orderBy] : 'c.nome';
       const orderDirection = orderDir === 'DESC' ? 'DESC' : 'ASC';
 
-      // Query com JOIN para calcular lavagens e secagens
       const query = `
         SELECT 
-          c.id, c.user_id, c.id_cliente_vm, c.nome, c.data_nascimento, c.cpf, c.telefone, c.email, 
-          c.genero, c.data_cadastro, c.data_ultima_compra, c.qtd_compras, c.valor_total_compras, 
-          c.qtd_compras_90, c.valor_total_compras_90, c.qtd_compras_30, c.valor_total_compras_30, 
-          c.qtd_compras_7, c.valor_total_compras_7, c.lavanderia, c.acoes, c.created_at, c.updated_at,
+          c.*,
           COALESCE(SUM(CASE WHEN p.tipo_servico = 'LAVAGEM' THEN 1 ELSE 0 END), 0) as total_lavagens,
           COALESCE(SUM(CASE WHEN p.tipo_servico = 'SECAGEM' THEN 1 ELSE 0 END), 0) as total_secagens
         FROM vm_lav_clientes c
         LEFT JOIN vm_lav_pedidos p ON p.cliente_id = c.id AND p.user_id = c.user_id
         WHERE c.user_id = ? AND (
-          c.nome LIKE ? 
-          OR c.email LIKE ?
-          OR c.telefone LIKE ?
-          OR c.cpf LIKE ?
-          OR DATE_FORMAT(c.data_cadastro, '%d/%m/%Y') LIKE ?
-          OR CAST(c.qtd_compras AS CHAR) LIKE ?
+          c.nome LIKE ? OR c.email LIKE ? OR c.telefone LIKE ? OR c.cpf LIKE ?
         )
         GROUP BY c.id
         ORDER BY ${orderByField} ${orderDirection}
         LIMIT ? OFFSET ?
       `;
-      
-      const params = [userId, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset];
 
-      logger.debug('Executando query de busca de clientes:');
-      logger.debug('Query: ' + query);
-      logger.debug('Params: ' + JSON.stringify(params));
-      
-      let queryResult: any;
-      try {
-        queryResult = await conn.query(query, params);
-      } catch (queryError: any) {
-        // Log detalhado no logger
-        logger.error('❌ ERRO SQL na busca de clientes:');
-        logger.error('Mensagem: ' + String(queryError.message || 'N/A'));
-        logger.error('Código: ' + String(queryError.code || 'N/A'));
-        logger.error('SQL State: ' + String(queryError.sqlState || 'N/A'));
-        logger.error('Query executada: ' + query);
-        logger.error('Parâmetros: ' + JSON.stringify(params));
-        logger.error('Stack: ' + String(queryError.stack || 'N/A'));
-        
-        // Também logar no console para garantir visibilidade
-        console.error('═══════════════════════════════════════════════════════════');
-        console.error('❌ ERRO SQL na busca de clientes:');
-        console.error('Mensagem:', queryError.message || 'N/A');
-        console.error('Código:', queryError.code || 'N/A');
-        console.error('SQL State:', queryError.sqlState || 'N/A');
-        console.error('SQL Message:', queryError.sqlMessage || 'N/A');
-        console.error('Query executada:', query);
-        console.error('Parâmetros:', JSON.stringify(params, null, 2));
-        console.error('Stack:', queryError.stack || 'N/A');
-        console.error('Erro completo:', JSON.stringify(queryError, Object.getOwnPropertyNames(queryError), 2));
-        console.error('═══════════════════════════════════════════════════════════');
-        
-        throw queryError;
-      }
+      const params = [userId, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset];
+      const queryResult = await conn.query(query, params);
 
-      // Extrair rows de forma segura
       let rows: any[] = [];
       if (Array.isArray(queryResult)) {
         rows = Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
-      } else if (queryResult && typeof queryResult === 'object' && 'length' in queryResult) {
-        rows = Array.from(queryResult as any);
       }
 
-      // Query de contagem total usando mesma lógica (sem GROUP BY)
       const totalQuery = `
-        SELECT COUNT(DISTINCT c.id) as total 
-        FROM vm_lav_clientes c
-        WHERE c.user_id = ? AND (
-          c.nome LIKE ? 
-          OR c.email LIKE ?
-          OR c.telefone LIKE ?
-          OR c.cpf LIKE ?
-          OR DATE_FORMAT(c.data_cadastro, '%d/%m/%Y') LIKE ?
-          OR CAST(c.qtd_compras AS CHAR) LIKE ?
-        )
+        SELECT COUNT(DISTINCT id) as total FROM vm_lav_clientes 
+        WHERE user_id = ? AND (nome LIKE ? OR email LIKE ? OR telefone LIKE ? OR cpf LIKE ?)
       `;
-      
-      const totalParams = [userId, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+      const totalParams = [userId, searchPattern, searchPattern, searchPattern, searchPattern];
+      const totalQueryResult = await conn.query(totalQuery, totalParams);
 
-      logger.debug('Executando query de contagem total:');
-      logger.debug('Query: ' + totalQuery);
-      logger.debug('Params: ' + JSON.stringify(totalParams));
-      
-      let totalQueryResult: any;
-      try {
-        totalQueryResult = await conn.query(totalQuery, totalParams);
-      } catch (queryError: any) {
-        // Log detalhado no logger
-        logger.error('❌ ERRO SQL na contagem total de clientes:');
-        logger.error('Mensagem: ' + String(queryError.message || 'N/A'));
-        logger.error('Código: ' + String(queryError.code || 'N/A'));
-        logger.error('SQL State: ' + String(queryError.sqlState || 'N/A'));
-        logger.error('Query executada: ' + totalQuery);
-        logger.error('Parâmetros: ' + JSON.stringify(totalParams));
-        logger.error('Stack: ' + String(queryError.stack || 'N/A'));
-        
-        // Também logar no console para garantir visibilidade
-        console.error('═══════════════════════════════════════════════════════════');
-        console.error('❌ ERRO SQL na contagem total de clientes:');
-        console.error('Mensagem:', queryError.message || 'N/A');
-        console.error('Código:', queryError.code || 'N/A');
-        console.error('SQL State:', queryError.sqlState || 'N/A');
-        console.error('SQL Message:', queryError.sqlMessage || 'N/A');
-        console.error('Query executada:', totalQuery);
-        console.error('Parâmetros:', JSON.stringify(totalParams, null, 2));
-        console.error('Stack:', queryError.stack || 'N/A');
-        console.error('Erro completo:', JSON.stringify(queryError, Object.getOwnPropertyNames(queryError), 2));
-        console.error('═══════════════════════════════════════════════════════════');
-        
-        throw queryError;
-      }
-
-      // Extrair totalRows de forma segura
       let totalRows: any[] = [];
       if (Array.isArray(totalQueryResult)) {
         totalRows = Array.isArray(totalQueryResult[0]) ? totalQueryResult[0] : totalQueryResult;
-      } else if (totalQueryResult && typeof totalQueryResult === 'object' && 'length' in totalQueryResult) {
-        totalRows = Array.from(totalQueryResult as any);
       }
-
       const total = totalRows && totalRows[0] ? totalRows[0].total : 0;
 
       return {
-        clientes: Array.isArray(rows) ? rows.map((row: any) => this.mapRowToCliente(row)) : [],
+        clientes: Array.isArray(rows) ? rows.map((row: any) => ({
+          ...(this.mapRowToCliente(row) as any),
+          total_lavagens: Number(row.total_lavagens) || 0,
+          total_secagens: Number(row.total_secagens) || 0,
+        })) : [],
         total: Number(total) || 0,
       };
     } catch (error: any) {
-      // Log detalhado do erro
-      logger.error('═══════════════════════════════════════════════════════════');
-      logger.error('❌ ERRO COMPLETO ao buscar clientes por termo');
-      logger.error('═══════════════════════════════════════════════════════════');
-      logger.error('Mensagem: ' + String(error.message || 'N/A'));
-      logger.error('Código: ' + String(error.code || 'N/A'));
-      logger.error('SQL State: ' + String(error.sqlState || 'N/A'));
-      logger.error('SQL Message: ' + String(error.sqlMessage || 'N/A'));
-      logger.error('Stack: ' + String(error.stack || 'N/A'));
-      logger.error('Erro completo (JSON): ' + JSON.stringify(error, Object.getOwnPropertyNames(error)));
-      logger.error('═══════════════════════════════════════════════════════════');
-      
-      // Se o erro for relacionado a funções SQL não encontradas, tentar busca simples
-      if (error.message && (error.message.includes('normaliza_numeros') || error.message.includes('normaliza_telefone') || error.message.includes('does not exist') || error.message.includes('FUNCTION'))) {
-        logger.warn('Tentando busca simples como fallback...');
-        try {
-          const searchPattern = `%${searchTerm}%`;
-          const orderByField = orderBy && orderByMap[orderBy] ? orderByMap[orderBy] : 'c.nome';
-          const orderDirection = orderDir === 'DESC' ? 'DESC' : 'ASC';
-          
-          const fallbackQuery = `
-            SELECT 
-              c.id, c.user_id, c.id_cliente_vm, c.nome, c.data_nascimento, c.cpf, c.telefone, c.email, 
-              c.genero, c.data_cadastro, c.data_ultima_compra, c.qtd_compras, c.valor_total_compras, 
-              c.qtd_compras_90, c.valor_total_compras_90, c.qtd_compras_30, c.valor_total_compras_30, 
-              c.qtd_compras_7, c.valor_total_compras_7, c.lavanderia, c.acoes, c.created_at, c.updated_at,
-              COALESCE(SUM(CASE WHEN p.tipo_servico = 'LAVAGEM' THEN 1 ELSE 0 END), 0) as total_lavagens,
-              COALESCE(SUM(CASE WHEN p.tipo_servico = 'SECAGEM' THEN 1 ELSE 0 END), 0) as total_secagens
-            FROM vm_lav_clientes c
-            LEFT JOIN vm_lav_pedidos p ON p.cliente_id = c.id AND p.user_id = c.user_id
-            WHERE c.user_id = ? AND (
-              c.nome LIKE ? 
-              OR c.email LIKE ?
-              OR c.cpf LIKE ?
-              OR c.telefone LIKE ?
-            )
-            GROUP BY c.id
-            ORDER BY ${orderByField} ${orderDirection}
-            LIMIT ? OFFSET ?
-          `;
-          const offset = (page - 1) * limit;
-          const fallbackResult = await conn.query(fallbackQuery, [userId, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset]);
-          
-          let fallbackRows: any[] = [];
-          if (Array.isArray(fallbackResult)) {
-            fallbackRows = Array.isArray(fallbackResult[0]) ? fallbackResult[0] : fallbackResult;
-          } else if (fallbackResult && typeof fallbackResult === 'object' && 'length' in fallbackResult) {
-            fallbackRows = Array.from(fallbackResult as any);
-          }
-          
-          return {
-            clientes: Array.isArray(fallbackRows) ? fallbackRows.map((row: any) => ({
-              ...this.mapRowToCliente(row),
-              total_lavagens: Number(row.total_lavagens) || 0,
-              total_secagens: Number(row.total_secagens) || 0,
-            })) : [],
-            total: Array.isArray(fallbackRows) ? fallbackRows.length : 0,
-          };
-        } catch (fallbackError: any) {
-          logger.error('Erro também no fallback: ' + String(fallbackError.message));
-          throw fallbackError;
-        }
-      }
+      logger.error('Erro na busca de clientes: ' + error.message);
       throw error;
     } finally {
       conn.release();
@@ -501,7 +415,7 @@ export class VmLavClienteModel {
         }
 
         const insertId = result?.insertId || result?.insertid || (Array.isArray(result) && result[0]?.insertId);
-        
+
         if (!insertId) {
           throw new Error('Não foi possível obter o ID do registro inserido');
         }
@@ -518,19 +432,90 @@ export class VmLavClienteModel {
   }
 
   async bulkUpsert(clientes: Omit<VmLavCliente, 'id' | 'created_at' | 'updated_at'>[]): Promise<void> {
+    if (clientes.length === 0) return;
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      for (const cliente of clientes) {
-        await this.upsert(cliente);
+      const batchSize = 100;
+      let novos = 0;
+      let alterados = 0;
+
+      for (let i = 0; i < clientes.length; i += batchSize) {
+        const chunk = clientes.slice(i, i + batchSize);
+
+        // UNIQUE KEY: user_id, id_cliente_vm
+        const searchValues: any[] = [];
+        const placeholders = chunk.map(c => {
+          searchValues.push(c.id_cliente_vm, c.user_id);
+          return '(?, ?)';
+        }).join(',');
+
+        const existingRows = await conn.query(
+          `SELECT id, id_cliente_vm, user_id FROM vm_lav_clientes WHERE (id_cliente_vm, user_id) IN (${placeholders})`,
+          searchValues
+        ) as any[];
+
+        const existingMap = new Map<string, number>();
+        const rows = Array.isArray(existingRows) ? existingRows : [];
+        const actualRows = (rows[0] && Array.isArray(rows[0]) ? rows[0] : rows);
+        for (const row of actualRows) {
+          existingMap.set(`${row.id_cliente_vm}_${row.user_id}`, row.id);
+        }
+
+        const toInsert: any[][] = [];
+        const toUpdate: any[][] = [];
+
+        for (const c of chunk) {
+          const existingId = existingMap.get(`${c.id_cliente_vm}_${c.user_id}`);
+          const values = [
+            c.nome, c.data_nascimento, c.cpf, c.telefone, c.email, c.genero,
+            c.data_cadastro, c.data_ultima_compra, c.qtd_compras, c.valor_total_compras,
+            c.qtd_compras_90, c.valor_total_compras_90, c.qtd_compras_30, c.valor_total_compras_30,
+            c.qtd_compras_7, c.valor_total_compras_7, c.lavanderia,
+            c.acoes ? (typeof c.acoes === 'string' ? c.acoes : JSON.stringify(c.acoes)) : null
+          ];
+
+          if (existingId) {
+            toUpdate.push([...values, c.id_cliente_vm, c.user_id]);
+          } else {
+            toInsert.push([c.user_id, c.id_cliente_vm, ...values]);
+          }
+        }
+
+        if (toInsert.length > 0) {
+          await conn.batch(
+            `INSERT INTO vm_lav_clientes 
+             (user_id, id_cliente_vm, nome, data_nascimento, cpf, telefone, email, genero, 
+              data_cadastro, data_ultima_compra, qtd_compras, valor_total_compras, 
+              qtd_compras_90, valor_total_compras_90, qtd_compras_30, valor_total_compras_30, 
+              qtd_compras_7, valor_total_compras_7, lavanderia, acoes) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            toInsert
+          );
+          novos += toInsert.length;
+        }
+
+        if (toUpdate.length > 0) {
+          await conn.batch(
+            `UPDATE vm_lav_clientes SET 
+             nome = ?, data_nascimento = ?, cpf = ?, telefone = ?, email = ?, genero = ?,
+             data_cadastro = ?, data_ultima_compra = ?, qtd_compras = ?, valor_total_compras = ?,
+             qtd_compras_90 = ?, valor_total_compras_90 = ?, qtd_compras_30 = ?, valor_total_compras_30 = ?,
+             qtd_compras_7 = ?, valor_total_compras_7 = ?, lavanderia = ?, acoes = ?
+             WHERE id_cliente_vm = ? AND user_id = ?`,
+            toUpdate
+          );
+          alterados += toUpdate.length;
+        }
       }
 
       await conn.commit();
-      logger.info(`✅ ${clientes.length} clientes sincronizados com sucesso`);
+      logger.info(`Bulk upsert clientes refatorado: ${novos} inseridos, ${alterados} atualizados. Total: ${clientes.length}`);
     } catch (error: any) {
       await conn.rollback();
-      logger.error(`Erro ao fazer bulk upsert de clientes: ${error.message}`);
+      logger.error(`Erro ao fazer bulk upsert de clientes (refatorado): ${error.message}`);
       throw error;
     } finally {
       conn.release();

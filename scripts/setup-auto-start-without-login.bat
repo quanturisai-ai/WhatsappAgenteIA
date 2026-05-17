@@ -76,7 +76,7 @@ echo - Os servicos iniciarao automaticamente mesmo sem login
 echo - A tarefa executa como SYSTEM (conta de sistema)
 echo - Os servicos ficarao acessiveis em:
 echo   - Frontend: http://localhost:3300
-echo   - Backend: http://localhost:3301
+echo   - Backend: http://localhost:3302
 echo.
 echo Para gerenciar a tarefa:
 echo 1. Abra o Task Scheduler (Win + R, digite: taskschd.msc)

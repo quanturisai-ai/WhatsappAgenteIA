@@ -6,8 +6,8 @@ import { WhatsAppManager } from '../services/whatsapp.manager';
 import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { MediaModel } from '../models/media.model';
-import pool from '../config/database';
 import logger from '../utils/logger';
+import { emitConversationNew, emitConversationUpdated } from '../utils/conversationSocketEmitter';
 
 const conversationService = new ConversationService();
 const conversationModel = new ConversationModel();
@@ -23,238 +23,40 @@ export const listConversations = async (
     const authReq = req as AuthRequest;
     const userId = authReq.userId!;
 
-    // Finalizar conversas antigas antes de listar (para garantir que estão atualizadas)
-    try {
-      await conversationService.finalizeOldConversations();
-    } catch (error: any) {
-      logger.warn(`Erro ao finalizar conversas antigas ao listar: ${error.message}`);
-      // Continuar mesmo se houver erro na finalização
+    const { status, search } = req.query;
+    const hasSearch = search && typeof search === 'string' && (search as string).trim().length > 0;
+
+    // Finalizar conversas antigas apenas na listagem normal (não na busca)
+    if (!hasSearch) {
+      try {
+        await conversationService.finalizeOldConversations();
+      } catch (error: any) {
+        logger.warn(`Erro ao finalizar conversas antigas ao listar: ${error.message}`);
+      }
     }
 
-    const { status, search } = req.query;
     let conversations: any[];
-    
-    // Se houver termo de busca, usar busca específica
     if (search && typeof search === 'string' && search.trim()) {
       conversations = await conversationModel.searchByTerm(userId, search.trim());
     } else {
-      conversations = await conversationModel.findByUserId(userId);
+      conversations = await conversationModel.findListCards(userId);
     }
 
-    // Garantir que conversations seja sempre um array
     if (!Array.isArray(conversations)) {
-      logger.warn(`findByUserId retornou um valor não-array para usuário ${userId}. Tipo: ${typeof conversations}`);
+      logger.warn(`findListCards/searchByTerm retornou não-array para usuário ${userId}`);
       conversations = [];
     }
 
-    // Filtrar por status se fornecido
     if (status) {
       conversations = conversations.filter((c) => c.status === status);
     }
 
-    // Enriquecer com informações adicionais
-    const enrichedConversations = await Promise.all(
-      conversations.map(async (conv) => {
-        try {
-          // Converter auto_responding do banco (0/1 ou null) para boolean
-          let isAutoResponding = true; // Default: ativo
-          if (conv.auto_responding !== null && conv.auto_responding !== undefined) {
-            if (typeof conv.auto_responding === 'number') {
-              isAutoResponding = conv.auto_responding === 1;
-            } else {
-              isAutoResponding = conv.auto_responding === true;
-            }
-          }
-          
-          const messageCount = await messageModel.countByConversation(conv.id);
-          
-          // Buscar última mensagem da conversa (ordenar por created_at DESC para pegar a mais recente)
-          // Filtrar mensagens que tenham conteúdo válido (não vazio e não apenas placeholders)
-          const conn = await pool.getConnection();
-          let lastMessage: string | undefined;
-          try {
-            // Primeiro verificar quantas mensagens existem
-            const countQueryResult = await conn.query(
-              'SELECT COUNT(*) as total FROM messages WHERE conversation_id = ?',
-              [conv.id]
-            ) as any;
-            // MariaDB retorna [rows, metadata] ou apenas rows dependendo da versão
-            const countRows = Array.isArray(countQueryResult) && Array.isArray(countQueryResult[0]) 
-              ? countQueryResult[0] 
-              : (Array.isArray(countQueryResult) ? countQueryResult : [countQueryResult]);
-            const totalCount = countRows && countRows.length > 0 ? countRows[0].total : 0;
-            logger.debug(`Conversa ${conv.id}: total de mensagens no banco: ${totalCount}`);
-            
-            if (totalCount === 0) {
-              logger.debug(`Conversa ${conv.id}: nenhuma mensagem encontrada no banco`);
-            } else {
-              // Buscar diretamente a última mensagem (mais simples e eficiente)
-              // Primeiro tentar buscar mensagens com conteúdo válido (não placeholders)
-              const queryResult = await conn.query(
-                `SELECT content, message_type 
-                 FROM messages 
-                 WHERE conversation_id = ? 
-                   AND content IS NOT NULL 
-                   AND content != '' 
-                   AND content NOT LIKE '[media]'
-                   AND content NOT LIKE '[location]'
-                   AND content NOT LIKE '[contact]'
-                   AND content NOT LIKE '[system]'
-                   AND content NOT LIKE '[other]'
-                 ORDER BY created_at DESC 
-                 LIMIT 1`,
-                [conv.id]
-              ) as any;
-              
-              // MariaDB retorna [rows, metadata] ou apenas rows dependendo da versão
-              const rows = Array.isArray(queryResult) && Array.isArray(queryResult[0]) 
-                ? queryResult[0] 
-                : (Array.isArray(queryResult) ? queryResult : [queryResult]);
-              
-              logger.debug(`Conversa ${conv.id}: primeira query retornou ${rows?.length || 0} resultado(s)`);
-              
-              // Se não encontrou, buscar qualquer mensagem com conteúdo (incluindo placeholders)
-              if (!rows || rows.length === 0 || !rows[0] || !rows[0].content) {
-                logger.debug(`Conversa ${conv.id}: tentando buscar qualquer mensagem com conteúdo...`);
-                const fallbackQueryResult = await conn.query(
-                  `SELECT content, message_type 
-                   FROM messages 
-                   WHERE conversation_id = ? 
-                     AND content IS NOT NULL 
-                     AND content != ''
-                   ORDER BY created_at DESC 
-                   LIMIT 1`,
-                  [conv.id]
-                ) as any;
-                
-                // MariaDB retorna [rows, metadata] ou apenas rows dependendo da versão
-                const fallbackRows = Array.isArray(fallbackQueryResult) && Array.isArray(fallbackQueryResult[0]) 
-                  ? fallbackQueryResult[0] 
-                  : (Array.isArray(fallbackQueryResult) ? fallbackQueryResult : [fallbackQueryResult]);
-                
-                logger.debug(`Conversa ${conv.id}: segunda query retornou ${fallbackRows?.length || 0} resultado(s)`);
-                
-                if (fallbackRows && fallbackRows.length > 0 && fallbackRows[0] && fallbackRows[0].content) {
-                  lastMessage = String(fallbackRows[0].content || '').trim();
-                  // Limitar a 50 caracteres e adicionar ... se ultrapassar
-                  if (lastMessage.length > 50) {
-                    lastMessage = lastMessage.substring(0, 50) + '...';
-                  }
-                  logger.debug(`Conversa ${conv.id}: última mensagem encontrada (fallback): "${lastMessage}"`);
-                } else {
-                  // Debug: ver todas as mensagens para entender o problema
-                  const allQueryResult = await conn.query(
-                    `SELECT id, content, message_type, created_at 
-                     FROM messages 
-                     WHERE conversation_id = ? 
-                     ORDER BY created_at DESC 
-                     LIMIT 5`,
-                    [conv.id]
-                  ) as any;
-                  
-                  // MariaDB retorna [rows, metadata] ou apenas rows dependendo da versão
-                  const allRows = Array.isArray(allQueryResult) && Array.isArray(allQueryResult[0]) 
-                    ? allQueryResult[0] 
-                    : (Array.isArray(allQueryResult) ? allQueryResult : [allQueryResult]);
-                  
-                  logger.debug(`Conversa ${conv.id}: debug - todas as mensagens:`, {
-                    count: allRows?.length || 0,
-                    messages: allRows?.map((r: any) => ({
-                      id: r.id,
-                      content: r.content ? r.content.substring(0, 30) : null,
-                      contentLength: r.content?.length || 0,
-                      messageType: r.message_type,
-                      isEmpty: !r.content || r.content.trim() === '',
-                    })),
-                  });
-                }
-              } else {
-                lastMessage = String(rows[0].content || '').trim();
-                // Limitar a 50 caracteres e adicionar ... se ultrapassar
-                if (lastMessage.length > 50) {
-                  lastMessage = lastMessage.substring(0, 50) + '...';
-                }
-                logger.debug(`Conversa ${conv.id}: última mensagem encontrada: "${lastMessage}"`);
-              }
-            }
-          } catch (error: any) {
-            logger.error(`Erro ao buscar última mensagem da conversa ${conv.id}: ${error.message}`);
-            logger.error(`Stack trace: ${error.stack}`);
-          } finally {
-            conn.release();
-          }
-          
-          // Converter needs_intervention do banco (0/1 ou null) para boolean
-          let needsIntervention = false;
-          if (conv.needs_intervention !== null && conv.needs_intervention !== undefined) {
-            if (typeof conv.needs_intervention === 'number') {
-              needsIntervention = conv.needs_intervention === 1;
-            } else {
-              needsIntervention = conv.needs_intervention === true;
-            }
-          }
+    logger.info(`Listando ${conversations.length} conversas para usuário ${userId}`);
 
-          // Log para debug: verificar contact_name
-          logger.info(`Conversa ${conv.id}: contact_name="${conv.contact_name || 'NULL'}", contact_number="${conv.contact_number}"`);
-          
-          const enrichedConv = {
-            id: conv.id,
-            contactNumber: conv.contact_number,
-            contactName: conv.contact_name && conv.contact_name.trim() !== '' ? conv.contact_name.trim() : null, // Garantir que seja null se vazio/undefined
-            status: conv.status,
-            lastMessageAt: conv.last_message_at,
-            lastMessage: lastMessage || undefined, // Garantir que seja undefined se vazio
-            createdAt: conv.created_at,
-            updatedAt: conv.updated_at,
-            isAutoResponding,
-            messageCount,
-            needsIntervention,
-            interventionResolvedAt: conv.intervention_resolved_at || null,
-          };
-          
-          // Log do resultado final
-          logger.debug(`Conversa ${conv.id} enriquecida: contactName="${enrichedConv.contactName || 'NULL'}", contactNumber="${enrichedConv.contactNumber}"`);
-          
-          // Log para debug
-          if (lastMessage) {
-            logger.debug(`Conversa ${conv.id}: última mensagem encontrada: "${lastMessage.substring(0, 30)}..."`);
-          } else {
-            logger.debug(`Conversa ${conv.id}: nenhuma mensagem válida encontrada`);
-          }
-          
-          return enrichedConv;
-        } catch (error: any) {
-          logger.error(`Erro ao enriquecer conversa ${conv.id}: ${error.message}`);
-          // Retornar conversa sem informações adicionais em caso de erro
-          return {
-            id: conv.id,
-            contactNumber: conv.contact_number,
-            contactName: conv.contact_name,
-            status: conv.status,
-            lastMessageAt: conv.last_message_at,
-            createdAt: conv.created_at,
-            updatedAt: conv.updated_at,
-            isAutoResponding: false,
-            messageCount: 0,
-            needsIntervention: false,
-            interventionResolvedAt: null,
-          };
-        }
-      })
-    );
-
-    logger.info(`Listando ${enrichedConversations.length} conversas para usuário ${userId}`);
-    
-    res.json({
-      conversations: enrichedConversations,
-    });
+    res.json({ conversations });
   } catch (error: any) {
     logger.error(`Erro ao listar conversas: ${error.message}`);
-    logger.error(`Stack trace: ${error.stack}`);
-    // Em caso de erro, retornar array vazio em vez de quebrar
-    res.json({
-      conversations: [],
-    });
+    res.json({ conversations: [] });
   }
 };
 
@@ -287,23 +89,21 @@ export const getConversation = async (
     // Buscar todas as mensagens sem limite de tempo para visualização no dashboard
     // Passar undefined para maxAgeHours para desabilitar o filtro de tempo
     const messages = await messageModel.findByConversationId(conversationId, 1000, undefined);
-    const _status = await conversationService.getConversationStatus(conversationId);
-
     // Garantir que messages seja sempre um array
     const messagesArray = Array.isArray(messages) ? messages : [];
 
     logger.debug(`getConversation - conversationId=${conversationId}, messages encontradas=${messagesArray.length}`);
-    
+
     if (messagesArray.length > 0) {
       logger.debug(`Primeira mensagem: id=${messagesArray[0].id}, content="${messagesArray[0].content?.substring(0, 50)}...", direction=${messagesArray[0].direction}, created_at=${messagesArray[0].created_at}`);
     }
 
-    // Buscar todas as mídias de uma vez para otimizar
+    // Buscar todas as mídias de uma vez para otimizar (inclui mensagens de áudio com media_id)
     const mediaIds = messagesArray
       .filter(msg => {
-        const hasMedia = msg.message_type === 'media' && msg.media_id;
+        const hasMedia = (msg.message_type === 'media' || msg.message_type === 'audio') && msg.media_id;
         if (hasMedia) {
-          logger.debug(`Mensagem de mídia encontrada: id=${msg.id}, media_id=${msg.media_id}, tipo=${typeof msg.media_id}`);
+          logger.debug(`Mensagem de mídia encontrada: id=${msg.id}, media_id=${msg.media_id}, tipo=${typeof msg.media_id}, message_type=${msg.message_type}`);
         }
         return hasMedia;
       })
@@ -318,9 +118,9 @@ export const getConversation = async (
       })
       .filter((id): id is number => id !== null && !isNaN(id))
       .filter((id, index, self) => self.indexOf(id) === index); // Remover duplicatas
-    
+
     logger.debug(`Mídias encontradas para buscar: ${mediaIds.length} IDs únicos: ${mediaIds.join(', ')}`);
-    
+
     const mediasMap = new Map<number, any>();
     if (mediaIds.length > 0) {
       for (const mediaId of mediaIds) {
@@ -372,27 +172,27 @@ export const getConversation = async (
         messageId: reaction.message_id, // message_id da mensagem reagida (VARCHAR)
         reactionEmoji: reaction.reaction_emoji,
         reactedBy: reaction.reacted_by,
-        createdAt: reaction.created_at instanceof Date 
-          ? reaction.created_at.toISOString() 
-          : typeof reaction.created_at === 'string' 
-            ? reaction.created_at 
+        createdAt: reaction.created_at instanceof Date
+          ? reaction.created_at.toISOString()
+          : typeof reaction.created_at === 'string'
+            ? reaction.created_at
             : new Date().toISOString(),
       }));
 
-      // Buscar informações da mídia se for mensagem de mídia
+      // Buscar informações da mídia se for mensagem de mídia ou áudio com media_id
       let media = null;
-      if (msg.message_type === 'media' && msg.media_id) {
+      if ((msg.message_type === 'media' || msg.message_type === 'audio') && msg.media_id) {
         // Converter media_id para número se necessário
         const mediaId = typeof msg.media_id === 'string' ? parseInt(msg.media_id, 10) : Number(msg.media_id);
-        
+
         if (!isNaN(mediaId)) {
           const mediaData = mediasMap.get(mediaId);
           if (mediaData) {
             // Converter BigInt para Number para evitar erro de serialização JSON
-            const fileSize = typeof mediaData.file_size === 'bigint' 
-              ? Number(mediaData.file_size) 
+            const fileSize = typeof mediaData.file_size === 'bigint'
+              ? Number(mediaData.file_size)
               : mediaData.file_size;
-            
+
             media = {
               id: mediaData.id,
               filename: mediaData.filename,
@@ -435,7 +235,7 @@ export const getConversation = async (
     }));
 
     logger.debug(`Mensagens formatadas: ${formattedMessages.length} mensagens`);
-    
+
     if (formattedMessages.length > 0) {
       logger.debug(`Exemplo de mensagem formatada:`, JSON.stringify(formattedMessages[0], null, 2));
     }
@@ -469,19 +269,19 @@ export const getConversation = async (
         cpf: (conversation as any).cliente_cpf || null,
         telefone: (conversation as any).cliente_telefone || null,
         email: (conversation as any).cliente_email || null,
-        ultimaCompra: (conversation as any).cliente_ultima_compra 
-          ? ((conversation as any).cliente_ultima_compra instanceof Date 
-              ? (conversation as any).cliente_ultima_compra.toISOString() 
-              : typeof (conversation as any).cliente_ultima_compra === 'string'
-                ? (conversation as any).cliente_ultima_compra
-                : null)
+        ultimaCompra: (conversation as any).cliente_ultima_compra
+          ? ((conversation as any).cliente_ultima_compra instanceof Date
+            ? (conversation as any).cliente_ultima_compra.toISOString()
+            : typeof (conversation as any).cliente_ultima_compra === 'string'
+              ? (conversation as any).cliente_ultima_compra
+              : null)
           : null,
         dataCadastro: (conversation as any).cliente_data_cadastro
-          ? ((conversation as any).cliente_data_cadastro instanceof Date 
-              ? (conversation as any).cliente_data_cadastro.toISOString() 
-              : typeof (conversation as any).cliente_data_cadastro === 'string'
-                ? (conversation as any).cliente_data_cadastro
-                : null)
+          ? ((conversation as any).cliente_data_cadastro instanceof Date
+            ? (conversation as any).cliente_data_cadastro.toISOString()
+            : typeof (conversation as any).cliente_data_cadastro === 'string'
+              ? (conversation as any).cliente_data_cadastro
+              : null)
           : null,
         totalCompras: (conversation as any).cliente_total_compras || 0,
         valorTotalCompras: parseFloat((conversation as any).cliente_valor_total_compras) || 0,
@@ -506,7 +306,7 @@ export const getConversation = async (
     };
 
     logger.debug(`Resposta enviada: ${formattedMessages.length} mensagens para conversationId=${conversationId}`);
-    
+
     res.json(response);
   } catch (error: any) {
     next(error);
@@ -687,6 +487,14 @@ export const markIntervention = async (
       intervention_resolved_at: null, // Limpar data de resolução se houver
     });
 
+    // Emitir via socket para atualização em tempo real
+    try {
+      const card = await conversationModel.getConversationCardById(userId, conversationId);
+      if (card) emitConversationUpdated(userId, card);
+    } catch (err: any) {
+      logger.warn(`Erro ao emitir conversation:updated: ${err?.message}`);
+    }
+
     res.json({
       message: 'Pendência marcada com sucesso',
       conversationId,
@@ -722,18 +530,41 @@ export const sendMessage = async (
     }
 
     const whatsappManager = WhatsAppManager.getInstance();
-    const whatsappService = whatsappManager.getServiceSync(userId);
+    let whatsappService = whatsappManager.getServiceSync(userId);
 
-    if (!whatsappService || !whatsappService.isReady()) {
-      const appError: AppError = new Error('WhatsApp não está pronto');
-      appError.statusCode = 400;
-      throw appError;
+    // Se o service não existe ou não está inicializado, tentar inicializar
+    if (!whatsappService) {
+      logger.warn(`[sendMessage] Service não encontrado para usuário ${userId}. Tentando inicializar...`);
+      try {
+        whatsappService = await whatsappManager.initializeService(userId);
+        // Aguardar um pouco para o cliente estabilizar
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (initError: any) {
+        logger.error(`[sendMessage] Falha ao inicializar service: ${initError.message}`);
+        const appError: AppError = new Error('WhatsApp não está conectado. Por favor, escaneie o QR Code na página de conexão.');
+        appError.statusCode = 400;
+        throw appError;
+      }
     }
 
     // Enviar mensagem via WhatsApp
-    // O handler handleOutgoingMessage() salvará a mensagem automaticamente no banco
-    // quando o WhatsApp confirmar o envio, então não precisamos salvar manualmente aqui
-    await whatsappService.sendMessage(conversation.contact_number, content);
+    // O service.sendMessage tem lógica de self-healing para verificar estado real
+    try {
+      await whatsappService.sendMessage(conversation.contact_number, content);
+    } catch (sendError: any) {
+      logger.error(`[sendMessage] Erro ao enviar: ${sendError.message}`);
+
+      // Se o erro indica cliente não pronto, sugerir reconexão
+      if (sendError.message.includes('não está pronto') || sendError.message.includes('null')) {
+        const appError: AppError = new Error('WhatsApp desconectado. Por favor, vá até a página de conexão e escaneie o QR Code novamente.');
+        appError.statusCode = 400;
+        throw appError;
+      }
+
+      const appError: AppError = new Error(sendError.message || 'Erro ao enviar mensagem');
+      appError.statusCode = 400;
+      throw appError;
+    }
 
     // A atualização de last_message_at também será feita pelo handleOutgoingMessage()
 
@@ -822,7 +653,7 @@ export const createConversation = async (
     // Exemplo: (62) 98170-7783 → 556281707783 (remove o 9)
     // Exemplo: (62) 8170-7783 → 556281707783 (mantém sem 9)
     let normalizedNumber = contactNumber.replace(/\D/g, ''); // Remove caracteres não numéricos
-    
+
     // Se o número tem 11 dígitos (DDD + 9 + número), remover o 9 (terceiro dígito)
     if (normalizedNumber.length === 11 && !normalizedNumber.startsWith('55')) {
       // Formato: DDD (2) + 9 (1) + número (8) = 11 dígitos
@@ -833,7 +664,7 @@ export const createConversation = async (
       // Remover o 9 (índice 4)
       normalizedNumber = normalizedNumber.slice(0, 4) + normalizedNumber.slice(5);
     }
-    
+
     // Adicionar 55 no início se não começar com 55
     if (!normalizedNumber.startsWith('55')) {
       normalizedNumber = '55' + normalizedNumber;
@@ -844,7 +675,7 @@ export const createConversation = async (
     if (existing) {
       // Verificar se já existe alguma mensagem na conversa (interação prévia)
       const messageCount = await messageModel.countByConversation(existing.id);
-      
+
       if (messageCount > 0) {
         // Já existe interação, retornar a conversa existente
         res.json({
@@ -853,7 +684,7 @@ export const createConversation = async (
         });
         return;
       }
-      
+
       // Existe conversa mas sem mensagens, retornar a existente
       res.json({
         message: 'Conversa já existe',
@@ -871,6 +702,14 @@ export const createConversation = async (
       auto_responding: false, // Iniciar com auto-responder desativado para conversa manual
       last_message_at: new Date(),
     });
+
+    // Emitir via socket para atualização em tempo real no frontend
+    try {
+      const card = await conversationModel.getConversationCardById(userId, conversation.id);
+      if (card) emitConversationNew(userId, card);
+    } catch (err: any) {
+      logger.warn(`Erro ao emitir conversation:new: ${err?.message}`);
+    }
 
     res.status(201).json({
       message: 'Conversa criada com sucesso',

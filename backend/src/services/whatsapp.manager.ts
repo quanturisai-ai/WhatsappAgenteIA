@@ -1,5 +1,7 @@
 import { WhatsAppService } from './whatsapp.service';
 import logger from '../utils/logger';
+import path from 'path';
+import fs from 'fs';
 
 /**
  * Gerenciador global de instâncias WhatsApp
@@ -101,14 +103,18 @@ export class WhatsAppManager {
     const service = this.services.get(userId);
     if (service) {
       await service.disconnect();
-      this.services.delete(userId);
-      logger.info(`Serviço WhatsApp removido para usuário ${userId}`);
+      // ✅ NÃO deletar o serviço do Map - manter a instância para que os listeners do Socket.IO continuem válidos
+      // Ao reconectar, a mesma instância será reutilizada e os eventos chegarão ao frontend
+      // this.services.delete(userId); // ❌ REMOVIDO
+      logger.info(`Serviço WhatsApp desconectado para usuário ${userId} (instância mantida no Map para reconexão)`);
     }
   }
 
   async logoutService(userId: number): Promise<void> {
     const service = this.services.get(userId);
+    
     if (service) {
+      // Se há serviço em memória, usar o logout normal
       try {
         await service.logout();
       } catch (error: any) {
@@ -118,6 +124,57 @@ export class WhatsAppManager {
         // Sempre remover o serviço do Map, mesmo se logout falhou
         this.services.delete(userId);
         logger.info(`Serviço WhatsApp removido para usuário ${userId}`);
+      }
+    } else {
+      // ✅ CORREÇÃO: Se NÃO há serviço em memória, ainda assim limpar arquivos e banco
+      logger.warn(`⚠️ Logout solicitado para usuário ${userId} mas não há serviço em memória. Limpando dados diretamente...`);
+      
+      try {
+        // Deletar arquivos de sessão
+        const sessionPath = process.env.WHATSAPP_SESSION_PATH || './whatsapp_sessions';
+        const userSessionPath = path.join(sessionPath, `user_${userId}`);
+        
+        if (fs.existsSync(userSessionPath)) {
+          logger.info(`🗑️ Deletando arquivos de sessão para usuário ${userId} (sem serviço em memória)...`);
+          
+          // Tentar deletar com retry em caso de EBUSY
+          let retries = 3;
+          while (retries > 0) {
+            try {
+              fs.rmSync(userSessionPath, { recursive: true, force: true });
+              logger.info(`✅ Arquivos de sessão deletados para usuário ${userId} de ${userSessionPath}`);
+              break;
+            } catch (error: any) {
+              retries--;
+              if (error.code === 'EBUSY' && retries > 0) {
+                logger.warn(`Arquivos em uso (EBUSY), aguardando... (${retries} tentativas restantes)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } else {
+                logger.warn(`Erro ao deletar arquivos de sessão: ${error.message}`);
+                break;
+              }
+            }
+          }
+        } else {
+          logger.debug(`Diretório de sessão não existe para usuário ${userId}: ${userSessionPath}`);
+        }
+        
+        // Remover sessão do banco
+        const { WhatsAppSessionModel } = await import('../models/whatsappSession.model');
+        const sessionModel = new WhatsAppSessionModel();
+        const session = await sessionModel.findByUserId(userId);
+        
+        if (session) {
+          await sessionModel.delete(session.id);
+          logger.info(`✅ Sessão removida do banco para usuário ${userId}`);
+        } else {
+          logger.debug(`Nenhuma sessão encontrada no banco para usuário ${userId}`);
+        }
+        
+        logger.info(`✅ Logout completo para usuário ${userId} (limpeza direta sem serviço em memória)`);
+      } catch (error: any) {
+        logger.error(`Erro ao fazer logout direto para usuário ${userId}: ${error.message}`);
+        throw error;
       }
     }
   }

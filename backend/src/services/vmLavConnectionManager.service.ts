@@ -14,96 +14,9 @@ import os from 'os';
 import axios from 'axios';
 import logger from '../utils/logger';
 
-// IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
-// ✅ CORREÇÃO: Usar LOCALAPPDATA no Windows para evitar cache do sistema
-// Isso evita que o Puppeteer tente usar o cache do sistema do Windows
-// (C:\WINDOWS\system32\config\systemprofile\.puppeteer_cache)
-if (!process.env.PUPPETEER_CACHE_DIR) {
-  let userCacheDir: string = '';
-  
-  if (process.platform === 'win32') {
-    // ✅ No Windows, usar LOCALAPPDATA que é mais confiável que os.homedir()
-    // Isso evita o problema quando o processo roda como serviço
-    const localAppData = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
-    
-    // Tentar encontrar cache existente primeiro
-    const possiblePaths = [
-      path.join(localAppData, '.cache', 'puppeteer'),
-      path.join(localAppData, '.puppeteer_cache'),
-      path.join(os.homedir(), '.cache', 'puppeteer'),
-      path.join(os.homedir(), '.puppeteer_cache'),
-    ];
-    
-    // Usar o primeiro diretório que existe e contém Chrome
-    let foundCache = false;
-    for (const cachePath of possiblePaths) {
-      if (fs.existsSync(cachePath)) {
-        // Verificar se contém Chrome
-        const findChrome = (dir: string, depth: number = 0): boolean => {
-          if (depth > 3) return false;
-          try {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-              const fullPath = path.join(dir, entry.name);
-              if (entry.isFile() && entry.name === 'chrome.exe') return true;
-              if (entry.isDirectory() && (entry.name.includes('chrome') || entry.name.includes('win'))) {
-                if (findChrome(fullPath, depth + 1)) return true;
-              }
-            }
-          } catch {}
-          return false;
-        };
-        
-        if (findChrome(cachePath)) {
-          userCacheDir = cachePath;
-          foundCache = true;
-          logger.info(`✅ Cache do Puppeteer encontrado (com Chrome) em: ${userCacheDir}`);
-          break;
-        }
-      }
-    }
-    
-    // Se não encontrou cache existente, usar LOCALAPPDATA
-    if (!foundCache) {
-      userCacheDir = path.join(localAppData, '.puppeteer_cache');
-    }
-  } else {
-    // Linux/Mac: usar cache padrão
-    const defaultCacheDir = path.join(os.homedir(), '.cache', 'puppeteer');
-    const fallbackCacheDir = path.join(os.homedir(), '.puppeteer_cache');
-    userCacheDir = fs.existsSync(defaultCacheDir) ? defaultCacheDir : fallbackCacheDir;
-  }
-  
-  // Garantir que userCacheDir está definido
-  if (!userCacheDir) {
-    userCacheDir = path.join(process.cwd(), '.puppeteer_cache');
-  }
-  
-  process.env.PUPPETEER_CACHE_DIR = userCacheDir;
-  
-  // Criar diretório de cache se não existir
-  if (!fs.existsSync(userCacheDir)) {
-    try {
-      fs.mkdirSync(userCacheDir, { recursive: true });
-      logger.info(`✅ Cache do Puppeteer criado em: ${userCacheDir}`);
-    } catch (error: any) {
-      logger.error(`❌ Erro ao criar cache do Puppeteer: ${error.message}`);
-      // Fallback para um caminho alternativo no diretório do projeto
-      const fallbackPath = path.join(process.cwd(), '.puppeteer_cache');
-      try {
-        fs.mkdirSync(fallbackPath, { recursive: true });
-        process.env.PUPPETEER_CACHE_DIR = fallbackPath;
-        logger.info(`✅ Cache do Puppeteer criado em fallback: ${fallbackPath}`);
-      } catch (fallbackError: any) {
-        logger.error(`❌ Erro ao criar cache fallback: ${fallbackError.message}`);
-      }
-    }
-  } else {
-    logger.info(`✅ Cache do Puppeteer encontrado em: ${userCacheDir}`);
-  }
-} else {
-  logger.info(`✅ Cache do Puppeteer configurado via env: ${process.env.PUPPETEER_CACHE_DIR}`);
-}
+import { setupPuppeteerCache, detectChrome, getPuppeteerConfig } from '../utils/puppeteer.util';
+setupPuppeteerCache();
+const chromeExecPathDefault = detectChrome();
 import { VmLavConnectionLogger } from '../utils/vmLavConnectionLogger';
 import { VmLavCredentialsModel, VmLavCredentials } from '../models/vmLavCredentials.model';
 import {
@@ -120,14 +33,14 @@ export class VmLavConnectionManager {
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private monitorInterval: NodeJS.Timeout | null = null;
   private browserInactiveCheckInterval: NodeJS.Timeout | null = null; // ✅ NOVO: Monitor de browser inativo
-  
+
   // Configuração do Puppeteer (calculada uma vez)
   private puppeteerConfig: any = null;
   private chromeExecPath: string | undefined = undefined;
-  
+
   // ✅ Sistema de lock para evitar concorrência no navegador
   private browserLock: Map<string, Promise<any>> = new Map(); // operationKey -> Promise
-  
+
   // ✅ NOVO: Controle de inatividade do browser
   private browserLastUsed: number = 0;
   private readonly BROWSER_IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutos de inatividade
@@ -136,97 +49,18 @@ export class VmLavConnectionManager {
     this.credentialsModel = new VmLavCredentialsModel();
     this.detectarChrome(); // Detectar Chrome na inicialização
   }
-  
+
   /**
    * Detecta o Chrome instalado no sistema (executado uma vez na inicialização)
    */
   private detectarChrome(): void {
-    if (process.platform === 'win32') {
-      // 1. Primeiro tentar encontrar Chrome instalado no sistema
-      const CHROME_CANDIDATES = [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
-        process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
-        process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application') : '',
-        process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application') : '',
-      ].filter(p => p);
-      
-      for (const p of CHROME_CANDIDATES) {
-        if (!fs.existsSync(p)) continue;
-        try {
-          const stat = fs.statSync(p);
-          if (stat.isDirectory()) {
-            const exe = path.join(p, 'chrome.exe');
-            if (fs.existsSync(exe)) {
-              this.chromeExecPath = exe;
-              logger.info(`✅ Chrome encontrado no sistema para VmLav: ${this.chromeExecPath}`);
-              return;
-            }
-          } else if (stat.isFile() && p.endsWith('.exe')) {
-            this.chromeExecPath = p;
-            logger.info(`✅ Chrome encontrado no sistema para VmLav: ${this.chromeExecPath}`);
-            return;
-          }
-        } catch (error: any) {
-          // Ignorar erros
-        }
-      }
-      
-      // 2. Se não encontrou no sistema, tentar encontrar Chrome instalado via Puppeteer
-      if (!this.chromeExecPath) {
-        const findChromeInDir = (dir: string, depth: number = 0): string | null => {
-          if (depth > 5) return null;
-          try {
-            if (!fs.existsSync(dir)) return null;
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-              const fullPath = path.join(dir, entry.name);
-              if (entry.isFile() && entry.name === 'chrome.exe') {
-                return fullPath;
-              } else if (entry.isDirectory() && (entry.name.includes('chrome') || entry.name.includes('win'))) {
-                const found = findChromeInDir(fullPath, depth + 1);
-                if (found) return found;
-              }
-            }
-          } catch (error: any) {
-            // Ignorar erros
-          }
-          return null;
-        };
-        
-        // ✅ MELHORADO: Buscar primeiro no cache configurado, depois em outros locais
-        const puppeteerCachePaths = [
-          process.env.PUPPETEER_CACHE_DIR, // Prioridade: cache configurado
-          process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, '.puppeteer_cache') : null,
-          process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, '.cache', 'puppeteer') : null,
-          path.join(os.homedir(), '.cache', 'puppeteer'),
-          path.join(os.homedir(), '.puppeteer_cache'),
-          path.join(process.cwd(), '.puppeteer_cache'),
-        ].filter(p => p);
-        
-        for (const cachePath of puppeteerCachePaths) {
-          if (!cachePath) continue;
-          try {
-            const foundChrome = findChromeInDir(cachePath);
-            if (foundChrome && fs.existsSync(foundChrome)) {
-              this.chromeExecPath = foundChrome;
-              logger.info(`✅ Chrome instalado via Puppeteer encontrado para VmLav: ${this.chromeExecPath}`);
-              return;
-            }
-          } catch (error: any) {
-            // Ignorar erros
-          }
-        }
-      }
-    }
-    
+    this.chromeExecPath = chromeExecPathDefault;
     if (!this.chromeExecPath) {
       logger.warn(`⚠️ Chrome não encontrado. Puppeteer tentará usar Chromium do cache.`);
       logger.warn(`💡 Cache configurado: ${process.env.PUPPETEER_CACHE_DIR || 'não definido'}`);
     }
   }
-  
+
   /**
    * Obtém a configuração do Puppeteer
    * ✅ MELHORADO: Força o uso do cache correto
@@ -235,42 +69,14 @@ export class VmLavConnectionManager {
     if (this.puppeteerConfig) {
       return this.puppeteerConfig;
     }
-    
-    this.puppeteerConfig = {
-      headless: true,
+
+    this.puppeteerConfig = getPuppeteerConfig({
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      protocolTimeout: 60000,
-      timeout: 60000,
-    };
-    
-    // ✅ FORÇAR cache path se configurado
-    if (process.env.PUPPETEER_CACHE_DIR) {
-      // O Puppeteer usa esta variável internamente, mas vamos garantir que está setada
-      process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR;
-      logger.info(`✅ Puppeteer usando cache em: ${process.env.PUPPETEER_CACHE_DIR}`);
-    }
-    
-    // Se encontrou Chrome, usar explicitamente
-    if (this.chromeExecPath) {
-      try {
-        const stats = fs.statSync(this.chromeExecPath);
-        if (stats.isFile()) {
-          this.puppeteerConfig.executablePath = this.chromeExecPath;
-          logger.info(`✅ Configurando Puppeteer para usar Chrome em: ${this.chromeExecPath}`);
-        }
-      } catch (error: any) {
-        logger.warn(`Erro ao verificar Chrome: ${error.message}`);
-        // Não definir executablePath - deixar Puppeteer usar Chromium
-        logger.info(`Usando Chromium padrão do Puppeteer`);
-      }
-    } else {
-      // Não definir executablePath - deixar Puppeteer baixar/usar Chromium automaticamente
-      logger.info(`Usando Chromium padrão do Puppeteer (será baixado automaticamente se necessário)`);
-    }
-    
+    });
+
     return this.puppeteerConfig;
   }
-  
+
   /**
    * ✅ Adquire lock exclusivo para usar o navegador
    * Isso evita que múltiplas operações tentem controlar o navegador simultaneamente
@@ -282,27 +88,27 @@ export class VmLavConnectionManager {
       await this.browserLock.get(operationKey);
       await new Promise(resolve => setTimeout(resolve, 100)); // pequeno delay
     }
-    
+
     // Se há qualquer outro lock ativo, aguardar
     while (this.browserLock.size > 0) {
       logger.debug(`[Browser Lock] Aguardando outros locks (${this.browserLock.size} ativos)`);
       await Promise.race(Array.from(this.browserLock.values()));
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    
+
     // Criar o lock
     let resolveLock: Function;
     const lockPromise = new Promise<void>(resolve => {
       resolveLock = resolve;
     });
-    
+
     this.browserLock.set(operationKey, lockPromise);
     logger.debug(`[Browser Lock] Lock adquirido para: ${operationKey}`);
-    
+
     // Retornar função para liberar o lock
     return resolveLock! as any;
   }
-  
+
   /**
    * ✅ Libera lock do navegador
    */
@@ -316,15 +122,15 @@ export class VmLavConnectionManager {
    */
   private async verificarEfecharBrowserInativo(): Promise<void> {
     if (!this.browser) return;
-    
+
     // Se há locks ativos, não fechar
     if (this.browserLock.size > 0) {
       return;
     }
-    
+
     const now = Date.now();
     const idleTime = now - this.browserLastUsed;
-    
+
     if (idleTime > this.BROWSER_IDLE_TIMEOUT) {
       logger.info(`🔒 Fechando browser VM Lav (inativo há ${Math.floor(idleTime / 1000)}s)`);
       try {
@@ -350,7 +156,7 @@ export class VmLavConnectionManager {
    */
   async initialize(): Promise<void> {
     logger.info('🔄 Inicializando VmLavConnectionManager...');
-    
+
     // ✅ STARTUP: Verificar e renovar tokens imediatamente
     logger.info('📋 Verificando tokens no startup...');
     try {
@@ -359,7 +165,7 @@ export class VmLavConnectionManager {
     } catch (error: any) {
       logger.error(`Erro na verificação inicial de tokens: ${error.message}`);
     }
-    
+
     // Iniciar monitor de expiração (a cada 5 minutos)
     // IMPORTANTE: Só renova quando tempo restante ≤ 30 min
     this.monitorInterval = setInterval(() => {
@@ -431,30 +237,32 @@ export class VmLavConnectionManager {
   private async getBrowserOnly(): Promise<Browser> {
     // Verificar se browser inativo precisa ser fechado
     await this.verificarEfecharBrowserInativo();
-    
+
     if (!this.browser) {
       const config = this.getPuppeteerConfig();
-      
-      logger.info(`Iniciando Puppeteer com configuração: ${JSON.stringify({ 
-        headless: config.headless, 
+
+      logger.info(`Iniciando Puppeteer com configuração: ${JSON.stringify({
+        headless: config.headless,
         hasExecutablePath: !!config.executablePath,
         executablePath: config.executablePath || 'não definido (usando Chromium)',
         cacheDir: process.env.PUPPETEER_CACHE_DIR || 'não definido'
       })}`);
-      
+
       try {
-        this.browser = await puppeteer.launch(config);
+        const { launchBrowser } = await import('../utils/puppeteer.util');
+        this.browser = await launchBrowser(config);
       } catch (error: any) {
         logger.error(`❌ Erro ao iniciar Puppeteer: ${error.message}`);
-        
+
         // ✅ FALLBACK: Se falhar com Chrome, tentar sem executablePath (usar Chromium)
         if (config.executablePath) {
           logger.warn(`Tentando fallback: usar Chromium do Puppeteer em vez de Chrome`);
           const fallbackConfig = { ...config };
           delete fallbackConfig.executablePath;
-          
+
           try {
-            this.browser = await puppeteer.launch(fallbackConfig);
+            const { launchBrowser } = await import('../utils/puppeteer.util');
+            this.browser = await launchBrowser(fallbackConfig);
             logger.info(`✅ Puppeteer iniciado com sucesso usando Chromium (fallback)`);
           } catch (fallbackError: any) {
             logger.error(`❌ Erro no fallback do Puppeteer: ${fallbackError.message}`);
@@ -464,7 +272,7 @@ export class VmLavConnectionManager {
           throw error;
         }
       }
-      
+
       // Tratar evento de desconexão do browser
       this.browser.on('disconnected', () => {
         logger.warn('Browser Puppeteer foi desconectado');
@@ -472,13 +280,13 @@ export class VmLavConnectionManager {
         this.browserLastUsed = 0;
       });
     }
-    
+
     // ✅ Atualizar timestamp de uso
     this.browserLastUsed = Date.now();
-    
+
     return this.browser;
   }
-  
+
   /**
    * ✅ NOVO: Cria uma página dedicada para uma operação específica
    * A página é NOVA e LIMPA, sem estado de operações anteriores
@@ -486,14 +294,14 @@ export class VmLavConnectionManager {
   private async criarPaginaDedicada(): Promise<Page> {
     const browser = await this.getBrowserOnly();
     const page = await browser.newPage();
-    
+
     // Configurar timeout padrão para a página
     page.setDefaultTimeout(30000);
     page.setDefaultNavigationTimeout(30000);
-    
+
     return page;
   }
-  
+
   /**
    * ✅ NOVO: Restaura sessão em uma página específica (não compartilhada)
    */
@@ -545,12 +353,12 @@ export class VmLavConnectionManager {
   private async monitorarTokens(): Promise<void> {
     try {
       const credentials = await this.credentialsModel.findAll();
-      
+
       for (const cred of credentials) {
         if (!cred.token_aplicacao || !cred.ativo) continue;
 
         const tempoRestante = obterTempoRestanteToken(cred.token_aplicacao);
-        
+
         if (tempoRestante === null) {
           // Token inválido/corrompido - renovar imediatamente
           logger.warn(`⚠️ Token INVÁLIDO para user_id ${cred.user_id} - renovando imediatamente`);
@@ -588,16 +396,16 @@ export class VmLavConnectionManager {
     logger.info(`🔄 [Keep-Alive] Iniciando verificação de conexão...`);
     try {
       const credentials = await this.credentialsModel.findAll();
-      
+
       for (const cred of credentials) {
         if (!cred.token_aplicacao || !cred.ativo) continue;
-        
+
         logger.debug(`🔄 [Keep-Alive] Verificando user_id ${cred.user_id}...`);
 
         try {
           // ✅ Usar axios diretamente (muito mais rápido e sem conflitos)
           const keepAliveUrl = 'https://apps.vmhub.vmtecnologia.io/vmlav/api/v1/relatorios/clientes';
-          
+
           const startTime = Date.now();
           const response = await axios.post(keepAliveUrl, null, {
             params: {
@@ -644,7 +452,7 @@ export class VmLavConnectionManager {
           const status = error.response?.status;
           const isTokenInvalido = status === 401 || status === 403;
           const isServerError = status >= 500 && status < 600;
-          
+
           if (isTokenInvalido) {
             // Token inválido/expirado - Renovação URGENTE
             logger.error(`🔴 Keep-alive detectou token INVÁLIDO para user_id ${cred.user_id} (status: ${status}) - renovação URGENTE`);
@@ -682,7 +490,7 @@ export class VmLavConnectionManager {
     }
 
     this.isRenovando.set(userId, true);
-    
+
     const operationKey = `renovar_token_${userId}`;
     let releaseLock: Function | null = null;
     let dedicatedPage: Page | null = null;
@@ -690,7 +498,7 @@ export class VmLavConnectionManager {
     try {
       // ✅ Adquirir lock exclusivo do navegador
       releaseLock = await this.acquireBrowserLock(operationKey) as any;
-      
+
       const credentials = await this.credentialsModel.findByUserId(userId);
       if (!credentials || !credentials.token_aplicacao) {
         logger.warn(`Credenciais não encontradas para user_id ${userId}`);
@@ -708,7 +516,7 @@ export class VmLavConnectionManager {
       // Nível 1: Método 4B (dinâmico)
       logger.info(`Tentando renovar token para user_id ${userId} - Método 4B (dinâmico)`);
       let resultado = await renovarTokenMetodo4B_PageGoto_Dinamico(dedicatedPage, credentials.token_aplicacao);
-      
+
       if (resultado.success && resultado.token) {
         await this.salvarTokenDireto(userId, resultado.token, credentials);
         logger.info(`✅ Token renovado com sucesso para user_id ${userId} (Método 4B)`);
@@ -720,7 +528,7 @@ export class VmLavConnectionManager {
       // Nível 2: Método 4A (fixo)
       logger.info(`Método 4B falhou, tentando Método 4A (fixo) para user_id ${userId}`);
       resultado = await renovarTokenMetodo4A_PageGoto_Fixo(dedicatedPage, credentials.token_aplicacao);
-      
+
       if (resultado.success && resultado.token) {
         await this.salvarTokenDireto(userId, resultado.token, credentials);
         logger.info(`✅ Token renovado com sucesso para user_id ${userId} (Método 4A)`);
@@ -733,12 +541,12 @@ export class VmLavConnectionManager {
       if (credentials.token_inicial) {
         logger.warn(`Métodos 4A e 4B falharam, tentando Nível 3 (token_inicial) para user_id ${userId}`);
         VmLavConnectionLogger.logTokenRenewal(userId, false, '4B/4A', 'Tentando Nível 3: token_inicial');
-        
+
         try {
           const { VmLavService } = await import('./vmLav.service');
           const vmLavService = new VmLavService();
           const novoToken = await vmLavService.obterTokenAplicacao(credentials.token_inicial);
-          
+
           if (novoToken) {
             await this.salvarTokenDireto(userId, novoToken, credentials);
             logger.info(`✅ Token renovado com sucesso para user_id ${userId} (Nível 3: token_inicial)`);
@@ -758,7 +566,7 @@ export class VmLavConnectionManager {
       if (credentials.dados_localstorage && credentials.cookies) {
         logger.warn(`Tentando Nível 4 (restaurar sessão + reload) para user_id ${userId}`);
         VmLavConnectionLogger.logTokenRenewal(userId, false, 'Nível 3', 'Tentando Nível 4: restaurar sessão');
-        
+
         try {
           // Usar a página dedicada que já temos (pode estar com sessão restaurada)
           // Navegar para dashboard para forçar renovação
@@ -766,29 +574,29 @@ export class VmLavConnectionManager {
             waitUntil: 'networkidle2',
             timeout: 30000,
           });
-          
+
           // Aguardar um pouco para o servidor processar
           await new Promise(resolve => setTimeout(resolve, 3000));
-          
+
           // Tentar extrair token do localStorage após navegação
           const tokenRestaurado = await dedicatedPage.evaluate(() => {
             // @ts-ignore - window está disponível no contexto do navegador
             const win = window as any;
-            return win.localStorage.getItem('authToken') || 
-                   win.localStorage.getItem('token') ||
-                   win.localStorage.getItem('access_token') ||
-                   win.localStorage.getItem('vm_token');
+            return win.localStorage.getItem('authToken') ||
+              win.localStorage.getItem('token') ||
+              win.localStorage.getItem('access_token') ||
+              win.localStorage.getItem('vm_token');
           });
-          
+
           if (tokenRestaurado) {
             const tempoRestanteRestaurado = obterTempoRestanteToken(tokenRestaurado);
-            
+
             // IMPORTANTE: Verificar se o token é diferente do atual (foi realmente renovado)
-            const tokenAtualExpirado = credentials.token_aplicacao 
-              ? (obterTempoRestanteToken(credentials.token_aplicacao) || 0) <= 0 
+            const tokenAtualExpirado = credentials.token_aplicacao
+              ? (obterTempoRestanteToken(credentials.token_aplicacao) || 0) <= 0
               : true;
             const tokenNovoValido = tempoRestanteRestaurado && tempoRestanteRestaurado > 5;
-            
+
             if (tokenNovoValido) {
               // Verificar se é um token diferente ou se o token antigo estava expirado
               if (tokenRestaurado !== credentials.token_aplicacao || tokenAtualExpirado) {
@@ -808,7 +616,7 @@ export class VmLavConnectionManager {
                   }
                   return storage;
                 });
-                
+
                 await this.salvarTokenComDados(userId, tokenRestaurado, credentials, cookiesAtualizados, localStorageAtualizado);
                 logger.info(`✅ Token restaurado com sucesso para user_id ${userId} (Nível 4: sessão) - ${tempoRestanteRestaurado} min restantes`);
                 VmLavConnectionLogger.logTokenRenewal(userId, true, 'Nível 4 (sessão)', undefined, tempoRestanteRestaurado);
@@ -830,7 +638,7 @@ export class VmLavConnectionManager {
       // Nível 5: Falha total - Marcar credencial com erro e notificar
       logger.error(`❌ FALHA TOTAL: Todos os níveis de renovação falharam para user_id ${userId}`);
       logger.error(`⚠️ INTERVENÇÃO MANUAL NECESSÁRIA - Login com CAPTCHA requerido para user_id ${userId}`);
-      
+
       // Marcar credencial como erro para que o dashboard exiba alerta
       try {
         await this.credentialsModel.update(credentials.id, {
@@ -851,9 +659,9 @@ export class VmLavConnectionManager {
     } finally {
       // ✅ Fechar página dedicada
       if (dedicatedPage) {
-        await dedicatedPage.close().catch(() => {});
+        await dedicatedPage.close().catch(() => { });
       }
-      
+
       // ✅ NOVO: Fechar browser após renovação para liberar recursos
       // Verificar se não há outras operações em andamento
       if (this.browser && this.browserLock.size === 0) {
@@ -866,7 +674,7 @@ export class VmLavConnectionManager {
           logger.warn(`Erro ao fechar browser: ${error.message}`);
         }
       }
-      
+
       // ✅ Liberar lock do navegador
       if (releaseLock) {
         releaseLock();
@@ -883,10 +691,10 @@ export class VmLavConnectionManager {
   private async salvarTokenDireto(userId: number, token: string, credentials: VmLavCredentials): Promise<void> {
     try {
       const expiracao = this.getTokenExpiration(token);
-      
+
       // Usar valores existentes como fallback (não precisa acessar browser)
-      const cookiesExistentes = Array.isArray(credentials.cookies) 
-        ? credentials.cookies 
+      const cookiesExistentes = Array.isArray(credentials.cookies)
+        ? credentials.cookies
         : (credentials.cookies ? JSON.parse(credentials.cookies as any) : []);
       const localStorageExistente = credentials.dados_localstorage || null;
 
@@ -899,10 +707,10 @@ export class VmLavConnectionManager {
         status: 'ativo',
         ultimo_erro: null,
       });
-      
+
       this.tokenCache.set(userId, token);
       logger.debug(`Token atualizado no banco para user_id ${userId}`);
-      
+
       VmLavConnectionLogger.logCredentialsUpdate(
         userId,
         ['token_aplicacao', 'token_expira_em', 'status', 'ultimo_erro'],
@@ -913,13 +721,13 @@ export class VmLavConnectionManager {
       VmLavConnectionLogger.logCredentialsUpdate(userId, [], false, error.message);
     }
   }
-  
+
   /**
    * ✅ NOVO: Salva token com cookies e localStorage atualizados
    */
   private async salvarTokenComDados(
-    userId: number, 
-    token: string, 
+    userId: number,
+    token: string,
     credentials: VmLavCredentials,
     cookies: any[],
     localStorage: any
@@ -936,10 +744,10 @@ export class VmLavConnectionManager {
         status: 'ativo',
         ultimo_erro: null,
       });
-      
+
       this.tokenCache.set(userId, token);
       logger.info(`Token, cookies e localStorage atualizados no banco para user_id ${userId}`);
-      
+
       VmLavConnectionLogger.logCredentialsUpdate(
         userId,
         ['token_aplicacao', 'token_expira_em', 'cookies', 'dados_localstorage', 'status', 'ultimo_erro'],

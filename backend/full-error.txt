@@ -1,0 +1,6 @@
+(conn:361, no: 1406, SQLState: 22001) Data too long for column 'cliente_nome' at row 1
+sql: INSERT INTO vm_lav_vouchers 
+             (user_id, id_voucher_vm, codigo, categoria_id, categoria_nome, data_gerado, 
+              validade_inicio, validade_fim, valor, saldo, responsavel, carteira, 
+              cliente_cpf, cliente_nome, ativo) 
+     ...

@@ -112,7 +112,7 @@
 ## Riscos e Lacunas
 
 - 🔴 Comportamento do kill de Chrome em Linux/Mac não implementado — `killBrowserProcessesForSession` só funciona no Windows (`service.ts:106`)
-- 🟡 Duração exata do debounce de mensagens não documentada no código lido — requer inspeção de `responseTimers`
+- 🟢 Duração do debounce: controlada por `MESSAGE_DEBOUNCE_MS` (env var), padrão **4000ms** (4s); 0 = processar imediatamente — confirmado em `whatsapp.service.ts:2076-2079`
 - 🟡 `session_files_hash` é armazenado mas a lógica de validação no auto-reconnect precisa de verificação detalhada
 - 🟡 `closeBrowserSafely()` tem timeout de 10s — se o browser não fechar, o processo Chrome pode ficar órfão
 - 🔴 Sem tratamento explícito de múltiplos usuários em produção simultânea — cada usuário tem seu processo Chromium isolado, o que pode ser intensivo em recursos

@@ -5,6 +5,9 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { TopicModel } from '../models/topic.model';
 import { MediaModel } from '../models/media.model';
+import { VmLavClienteModel } from '../models/vmLavCliente.model';
+import { VmLavVoucherModel } from '../models/vmLavVoucher.model';
+import { FidelizacaoService } from './fidelizacao.service';
 import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
@@ -81,11 +84,11 @@ export class RAGService {
 
     // Calcular score ponderado
     let score = 0;
-    
+
     if (hasTriggerKeyword) {
       score += this.TRIGGER_KEYWORD_WEIGHT;
     }
-    
+
     score += similarity * this.VECTOR_SIMILARITY_WEIGHT;
     score += normalizedPriority * this.PRIORITY_WEIGHT;
 
@@ -106,7 +109,7 @@ export class RAGService {
     };
 
     const contextLabel = contextMap[topic.context] || topic.context || 'Personalizado';
-    
+
     // Formatar trigger keywords
     const triggerKeywords = topic.trigger_keywords && Array.isArray(topic.trigger_keywords) && topic.trigger_keywords.length > 0
       ? topic.trigger_keywords.map((kw: string) => `"${kw}"`).join(', ')
@@ -114,11 +117,11 @@ export class RAGService {
 
     // Construir texto formatado
     let formatted = `Contexto: ${contextLabel}\n`;
-    
+
     if (triggerKeywords) {
       formatted += `Se o cliente disser: ${triggerKeywords} ou sinonimos.\n`;
     }
-    
+
     formatted += `Considere: ${topic.description || ''}`;
 
     return formatted;
@@ -135,7 +138,7 @@ export class RAGService {
     };
 
     const fileTypeLabel = fileTypeMap[media.file_type] || media.file_type || 'Mídia';
-    
+
     // Construir texto formatado
     let formatted = `Mídia disponível: ${fileTypeLabel}\n`;
     formatted += `Título: ${media.title || ''}\n`;
@@ -201,7 +204,7 @@ export class RAGService {
       // Buscar dados completos do banco para formatar
       let text = result.text;
       let priority = 0;
-      
+
       try {
         const topic = await this.topicModel.findById(topicId);
         if (topic) {
@@ -286,7 +289,7 @@ export class RAGService {
 
       // Buscar dados completos do banco para formatar
       let text = result.text;
-      
+
       try {
         const media = await this.mediaModel.findById(mediaId);
         if (media) {
@@ -321,11 +324,11 @@ export class RAGService {
   private async retrieveContext(userId: number, query: string, nResults: number = 5): Promise<string> {
     try {
       logger.info(`[RAG] retrieveContext chamado com query: "${query.substring(0, 100)}..."`);
-      
+
       // Obter configuração do agente para pegar o modelo de embedding
       const agentConfig = await this.agentConfigModel.findByUserId(userId);
       const embeddingModel = agentConfig?.embedding_model || undefined;
-      
+
       logger.debug(`[RAG] Buscando contexto com modelo de embedding: ${embeddingModel || 'padrão'}`);
 
       // 1. Normalizar query para busca por trigger keywords
@@ -342,7 +345,7 @@ export class RAGService {
 
       // 3. Busca vetorial com threshold de similaridade (usando modelo do AgentConfig)
       const queryEmbedding = await this.ollamaService.generateEmbedding(query, embeddingModel);
-      
+
       // Buscar mais resultados para depois filtrar e re-ranking
       const vectorResults = await this.chromaService.query(
         userId,
@@ -356,14 +359,14 @@ export class RAGService {
       // 4. Re-ranking separado para tópicos e mídias
       const rankedTopics = await this.rankTopics(topicsWithKeywords, vectorResults);
       const rankedMedias = await this.rankMedias(mediasWithKeywords, vectorResults);
-      
+
       logger.debug(`[RAG] Após re-ranking: ${rankedTopics.length} tópicos, ${rankedMedias.length} mídias`);
 
       // 5. Combinar resultados mantendo rankings separados
       // Primeiro os tópicos, depois as mídias (cada um com seu próprio top N)
       const topTopics = rankedTopics.slice(0, nResults);
       const topMedias = rankedMedias.slice(0, nResults);
-      
+
       // Combinar resultados
       const topResults = [...topTopics, ...topMedias];
 
@@ -394,10 +397,10 @@ export class RAGService {
       // Obter max_age_hours da configuração do agente
       const agentConfig = await this.agentConfigModel.findByUserId(userId);
       const maxAgeHours = agentConfig?.max_age_hours ?? 12; // Padrão: 12 horas
-      
+
       // Buscar apenas mensagens das últimas X horas, limitado a 10 mensagens
       const messages = await this.messageModel.findByConversationId(conversationId, limit, maxAgeHours);
-      
+
       if (messages.length === 0) {
         return { history: '', lastMessage: '' };
       }
@@ -406,10 +409,10 @@ export class RAGService {
       const lastMessage = messages[messages.length - 1];
       const isLastFromClient = lastMessage.direction === 'incoming';
       const lastClientMessage = isLastFromClient ? lastMessage.content : '';
-      
+
       // Histórico sem a última mensagem (se for do cliente, já está separada)
       const historyMessages = isLastFromClient ? messages.slice(0, -1) : messages;
-      
+
       // Formatar histórico em formato narrativo
       const historyLines: string[] = [];
       for (const msg of historyMessages) {
@@ -442,10 +445,10 @@ export class RAGService {
     const lastMessage = customHistory[customHistory.length - 1];
     const isLastFromClient = lastMessage.role === 'Cliente';
     const lastClientMessage = isLastFromClient ? lastMessage.content : '';
-    
+
     // Histórico sem a última mensagem
     const historyMessages = isLastFromClient ? customHistory.slice(0, -1) : customHistory;
-    
+
     // Formatar histórico em formato narrativo
     const historyLines: string[] = [];
     for (const msg of historyMessages) {
@@ -471,10 +474,10 @@ export class RAGService {
       const agentConfig = await this.agentConfigModel.findByUserId(userId);
       const maxAgeHours = agentConfig?.max_age_hours ?? 12; // Padrão: 12 horas
       const generationModel = agentConfig?.generation_model || undefined;
-      
+
       // Buscar mensagens das últimas X horas para o resumo (limitado a 100 mensagens)
       const messages = await this.messageModel.findByConversationId(conversationId, 100, maxAgeHours);
-      
+
       if (messages.length === 0) {
         return '';
       }
@@ -498,7 +501,7 @@ export class RAGService {
   async needsRecontextualization(conversationId: number): Promise<boolean> {
     try {
       const conversation = await this.conversationModel.findById(conversationId);
-      
+
       if (!conversation || !conversation.last_message_at) {
         return false;
       }
@@ -537,7 +540,7 @@ export class RAGService {
     const lines = cleanedResponse.split('\n');
     const seen = new Set<string>();
     const uniqueLines: string[] = [];
-    
+
     for (const line of lines) {
       const normalizedLine = line.trim();
       if (normalizedLine && !seen.has(normalizedLine)) {
@@ -554,7 +557,7 @@ export class RAGService {
         uniqueLines.push(line); // Manter linhas vazias
       }
     }
-    
+
     return uniqueLines.join('\n').trim();
   }
 
@@ -563,7 +566,7 @@ export class RAGService {
    */
   private getCurrentDateTime(): string {
     const now = new Date();
-    
+
     // Obter data/hora no fuso horário local (America/Sao_Paulo)
     // Usar Intl.DateTimeFormat para obter os componentes da data no fuso horário correto
     const formatter = new Intl.DateTimeFormat('pt-BR', {
@@ -576,7 +579,7 @@ export class RAGService {
       second: '2-digit',
       hour12: false,
     });
-    
+
     const parts = formatter.formatToParts(now);
     const anoLocal = parseInt(parts.find(p => p.type === 'year')?.value || '0');
     const mesLocal = parts.find(p => p.type === 'month')?.value || '00';
@@ -584,23 +587,23 @@ export class RAGService {
     const horaLocal = parts.find(p => p.type === 'hour')?.value || '00';
     const minutoLocal = parts.find(p => p.type === 'minute')?.value || '00';
     const segundoLocal = parts.find(p => p.type === 'second')?.value || '00';
-    
+
     // Obter milissegundos
     const milissegundoLocal = String(now.getMilliseconds()).padStart(3, '0');
-    
+
     // Calcular offset do fuso horário (America/Sao_Paulo é UTC-3)
     // Usar Intl.DateTimeFormat para obter o offset correto
     const offsetFormatter = new Intl.DateTimeFormat('en', {
       timeZone: 'America/Sao_Paulo',
       timeZoneName: 'longOffset',
     });
-    
+
     // Extrair offset do formato (ex: "GMT-03:00")
     const offsetString = offsetFormatter.formatToParts(now).find(p => p.type === 'timeZoneName')?.value || '-03:00';
     const offsetStr = offsetString.replace('GMT', '').trim();
-    
+
     const dataHoraLocal = `${anoLocal}-${mesLocal}-${diaLocal}T${horaLocal}:${minutoLocal}:${segundoLocal}.${milissegundoLocal}${offsetStr}`;
-    
+
     return `DATA/HORA: ${dataHoraLocal}`;
   }
 
@@ -621,12 +624,93 @@ export class RAGService {
       // Obter configurações do agente
       const agentConfig = await this.agentConfigModel.findByUserId(userId);
 
+      // Obter dados do cliente (para o prompt)
+      let clienteInfo = '';
+      if (conversationId > 0) {
+        try {
+          const conversation = await this.conversationModel.findById(conversationId);
+          if (conversation) {
+            const nome = conversation.contact_name || '';
+            const telefone = conversation.contact_number || '';
+
+            // Formatar: Nome (Telefone) ou apenas Telefone se não tiver nome
+            const contatoCliente = nome ? `${nome} (${telefone})` : telefone;
+
+            clienteInfo = `👤 USUÁRIO ID: ${userId}\n💬 CONVERSA ID: ${conversationId}\n📱 CONTATO CLIENTE: ${contatoCliente}`;
+
+            // Progresso do cliente no programa de fidelidade (para a IA informar "faltam X" + barra ✅/⬜)
+            try {
+              const clienteModel = new VmLavClienteModel();
+              const fidelizacaoService = new FidelizacaoService();
+              const cliente = await clienteModel.findByTelefoneNormalized(userId, conversation.contact_number || '');
+              if (cliente?.cpf) {
+                const progresso = await fidelizacaoService.getProgressoParaPrompt(userId, cliente.cpf);
+                if (progresso) {
+                  const objLav = progresso.proximoObjetivoLavagens ?? 0;
+                  const objSec = progresso.proximoObjetivoSecagens ?? 0;
+                  const preenchidosLav = Math.max(0, objLav - progresso.lavagensFaltam);
+                  const preenchidosSec = Math.max(0, objSec - progresso.secagensFaltam);
+                  const barraLav = objLav > 0 ? '✅'.repeat(preenchidosLav) + '⬜'.repeat(progresso.lavagensFaltam) : '';
+                  const barraSec = objSec > 0 ? '✅'.repeat(preenchidosSec) + '⬜'.repeat(progresso.secagensFaltam) : '';
+                  const lav = `Lavagens: Faltam ${progresso.lavagensFaltam}${progresso.proximoPremioLavagens ? ` (Prêmio: ${progresso.proximoPremioLavagens})` : ''}`;
+                  const sec = `Secagens: Faltam ${progresso.secagensFaltam}${progresso.proximoPremioSecagens ? ` (Prêmio: ${progresso.proximoPremioSecagens})` : ''}`;
+                  clienteInfo += `\nPROXIMO PREMIO PROGRAMA FIDELIDADE :\n${lav}`;
+                  if (barraLav) clienteInfo += `\n${barraLav}`;
+                  clienteInfo += `\n${sec}`;
+                  if (barraSec) clienteInfo += `\n${barraSec}`;
+                }
+                // SALDO VOUCHERS: todos os vouchers do cliente (incluindo saldo zerado)
+                try {
+                  const voucherModel = new VmLavVoucherModel();
+                  const vouchers = await voucherModel.findByUserIdAndClienteCpf(userId, cliente.cpf);
+                  clienteInfo += '\nLISTA DE VOUCHERS DESTE CLIENTE: (Informe os codigos abaixo ao cliente quando for solicitado por ele)';
+                  if (vouchers.length === 0) {
+                    clienteInfo += '\nNenhum voucher encontrado no CPF deste cliente.';
+                  } else {
+                    const fmtData = (d: Date | null | undefined): string => {
+                      if (!d) return '-';
+                      const x = new Date(d);
+                      const day = String(x.getDate()).padStart(2, '0');
+                      const month = String(x.getMonth() + 1).padStart(2, '0');
+                      return `${day}/${month}/${x.getFullYear()}`;
+                    };
+                    const fmtSaldo = (n: number): string => {
+                      const v = Number(n);
+                      const s = (isNaN(v) ? 0 : v).toFixed(2).replace('.', ',');
+                      return `R$ ${s}`;
+                    };
+                    for (const v of vouchers) {
+                      const cat = v.categoria_nome ? ` (${v.categoria_nome})` : '';
+                      const gerado = fmtData(v.data_gerado);
+                      const validade = fmtData(v.validade_fim);
+                      const status = v.ativo ? 'Ativo' : 'Inativo';
+                      clienteInfo += `\nVoucher: ${v.codigo} Saldo: ${fmtSaldo(v.saldo)}${cat} (gerado: ${gerado} - validade ${validade}) ${status}`;
+                    }
+                  }
+                } catch (errVou: any) {
+                  logger.debug(`Erro ao buscar vouchers para prompt: ${errVou?.message || errVou}`);
+                }
+              }
+            } catch (errFid: any) {
+              logger.debug(`Erro ao buscar progresso fidelidade para prompt: ${errFid?.message || errFid}`);
+            }
+          }
+        } catch (error) {
+          logger.error(`Erro ao buscar dados do cliente para prompt: ${error}`);
+        }
+      }
+
+      // Se não conseguiu obter dados (ex: teste sem ID), usar defaults
+      if (!clienteInfo) {
+        clienteInfo = `👤 USUÁRIO ID: ${userId}\n💬 CONVERSA ID: ${conversationId}\n📱 CONTATO CLIENTE: Desconhecido`;
+      }
+
       // Duas buscas RAG separadas:
       // 1. Histórico de contexto: baseado na interação anterior do cliente (apenas se houver)
       // 2. Contexto atual: baseado na resposta atual do cliente
       let lastClientContext = '';
       let currentClientContext = '';
-      
+
       // Busca 1: Histórico de contexto (interação anterior do cliente)
       // Usar EXATAMENTE a mesma estrutura da busca do contexto atual
       if (conversationId > 0) {
@@ -641,7 +725,7 @@ export class RAGService {
           logger.info(`[RAG] Nenhuma mensagem anterior do cliente encontrada para conversationId=${conversationId}`);
         }
       }
-      
+
       // Busca 2: Contexto atual (resposta atual do cliente)
       // Sempre executar, independente de conversationId - mesma estrutura da busca 1
       logger.info(`[RAG] Buscando contexto atual com mensagem do cliente: "${userMessage.substring(0, 100)}..."`);
@@ -651,14 +735,14 @@ export class RAGService {
       // Obter histórico da conversa se necessário
       let historyText = '';
       let lastClientMessage = userMessage; // Por padrão, a mensagem atual é a última
-      
+
       if (includeHistory) {
         if (customHistory && customHistory.length > 0) {
           // Usar histórico customizado (para teste)
           const formatted = this.formatCustomHistoryAsNarrative(customHistory);
           historyText = formatted.history;
-          // Se houver última mensagem do cliente no histórico, usar ela; senão usar a mensagem atual
-          if (formatted.lastMessage) {
+          // Só usar última mensagem do histórico se userMessage estiver vazio (evita sobrescrever texto consolidado do debounce)
+          if (formatted.lastMessage && !userMessage?.trim()) {
             lastClientMessage = formatted.lastMessage;
           }
         } else if (conversationId > 0) {
@@ -674,8 +758,8 @@ export class RAGService {
             // Usar histórico completo recente em formato narrativo
             const formatted = await this.getConversationHistory(conversationId, userId, 10);
             historyText = formatted.history;
-            // Se houver última mensagem do cliente no histórico, usar ela; senão usar a mensagem atual
-            if (formatted.lastMessage) {
+            // Só usar última mensagem do histórico se userMessage estiver vazio (evita sobrescrever texto consolidado do debounce)
+            if (formatted.lastMessage && !userMessage?.trim()) {
               lastClientMessage = formatted.lastMessage;
             }
           }
@@ -711,26 +795,26 @@ export class RAGService {
       }
 
       // 6. Outras instruções (SEMPRE presente com data/hora)
-      prompt += `Outras instruções:\n${currentDateTime}\n`;
-      
+      prompt += `Outras instruções:\n${currentDateTime}\n${clienteInfo}\n`;
+
       // Histórico de contexto (apenas se houver resultado da busca RAG com interação anterior do cliente)
       if (lastClientContext) {
         prompt += `\nHistórico de contexto:\n${lastClientContext}\n`;
       }
-      
+
       // Contexto atual (apenas se houver resultado da busca RAG com mensagem atual do cliente)
       if (currentClientContext) {
         prompt += `\nContexto atual:\n${currentClientContext}\n`;
       }
-      
+
       prompt += '\n';
 
       // 7. Instruções sobre envio de mídias (apenas se houver mídias no contexto)
       // Verificar se há menção a mídias no contexto (procurar por "media_id", "Mídia ID", "ID da mídia")
-      const hasMediaInContext = 
+      const hasMediaInContext =
         (lastClientContext && /(?:media_id|Mídia ID|ID da mídia|media_)\s*:?\s*\d+/i.test(lastClientContext)) ||
         (currentClientContext && /(?:media_id|Mídia ID|ID da mídia|media_)\s*:?\s*\d+/i.test(currentClientContext));
-      
+
       if (hasMediaInContext) {
         prompt += `Instruções sobre envio de mídias:\n`;
         prompt += `O contexto acima menciona mídias (imagens, vídeos, documentos) que podem ser enviadas ao cliente. Você pode solicitar o envio usando o seguinte comando especial:\n`;
@@ -774,7 +858,7 @@ export class RAGService {
       // Obter configuração do agente para pegar o modelo de geração e parâmetros
       const agentConfig = await this.agentConfigModel.findByUserId(userId);
       const generationModel = agentConfig?.generation_model || undefined;
-      
+
       // Preparar opções de geração
       // Garantir que os valores sejam números (MariaDB pode retornar DECIMAL como string)
       const generationOptions = {
@@ -791,7 +875,7 @@ export class RAGService {
           ? (typeof agentConfig.repeat_penalty === 'string' ? parseFloat(agentConfig.repeat_penalty) : Number(agentConfig.repeat_penalty))
           : undefined,
       };
-      
+
       logger.debug(`Gerando resposta com modelo de geração: ${generationModel || 'padrão'}, opções: ${JSON.stringify(generationOptions)}`);
       logger.debug(`Incluir histórico na resposta: ${includeHistory}`);
 
@@ -880,7 +964,8 @@ export class RAGService {
       // Obter histórico da conversa em formato narrativo
       const historyData = await this.getConversationHistory(conversationId, userId, 10);
       const historyText = historyData.history;
-      const lastClientMessage = historyData.lastMessage || userMessage;
+      // Priorizar userMessage (texto consolidado do debounce) sobre a última mensagem do histórico
+      const lastClientMessage = userMessage?.trim() ? userMessage : (historyData.lastMessage || userMessage);
 
       // Construir prompt simples
       let prompt = '';
@@ -889,7 +974,7 @@ export class RAGService {
         if (agentConfig.business_name) {
           prompt += `Você é um assistente de atendimento da empresa ${agentConfig.business_name}.\n`;
         }
-        
+
         if (agentConfig.personality) {
           prompt += `\n${agentConfig.personality}\n\n`;
         }

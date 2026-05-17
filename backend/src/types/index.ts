@@ -26,6 +26,7 @@ export interface Conversation {
   user_id: number;
   contact_number: string;
   contact_name?: string;
+  lid?: string | null;
   status: 'new' | 'in_progress' | 'paused' | 'finished';
   auto_responding?: boolean | number; // Pode ser boolean ou number (0/1) do banco
   last_message_at?: Date;
@@ -41,7 +42,7 @@ export interface Message {
   conversation_id: number;
   message_id?: string;
   content: string;
-  message_type?: 'text' | 'media' | 'reaction' | 'system' | 'location' | 'contact' | 'other';
+  message_type?: 'text' | 'audio' | 'media' | 'reaction' | 'system' | 'location' | 'contact' | 'other';
   media_id?: number | null;
   direction: 'incoming' | 'outgoing';
   is_from_ai: boolean;
@@ -109,7 +110,8 @@ export interface Media {
   user_id: number;
   filename: string;
   file_path: string;
-  file_type: 'video' | 'image' | 'document';
+  file_type: 'video' | 'image' | 'document' | 'audio';
+  source?: 'outgoing' | 'incoming';
   file_size: number;
   title: string;
   description: string;

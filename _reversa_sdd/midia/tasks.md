@@ -29,6 +29,12 @@
   - Critério de pronto: mídias obrigatórias enviadas automaticamente no início das conversas
   - Confiança: 🟢
 
+- [ ] T-05 — **Corrigir bug:** `[ENVIAR_MIDIA:id]` em `ConversationService` deve verificar `is_active=true` além de `status='completed'` antes de enviar a mídia
+  - Bug confirmado em: `backend/src/services/conversation.service.ts:259`
+  - Critério de pronto: mídia com `is_active=false` não é enviada mesmo que a IA solicite via `[ENVIAR_MIDIA:id]`
+  - Prioridade: **Must** (comportamento incorreto confirmado)
+  - Confiança: 🟢
+
 ## Lacunas Pendentes (🔴)
 
-- Limite de tamanho do upload de mídia não confirmado — verificar Multer config
+- Limite de tamanho do upload de mídia não confirmado — verificar Multer config (provável 50MB pelo padrão Multer)

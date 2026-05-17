@@ -15,7 +15,7 @@ export class MessageModel {
    */
   private async addReactionsToMessages(messages: Message | Message[]): Promise<Message | Message[]> {
     const messageArray = Array.isArray(messages) ? messages : [messages];
-    
+
     for (const message of messageArray) {
       try {
         // Usar message_id (string) em vez de id (number) para buscar reações
@@ -31,14 +31,14 @@ export class MessageModel {
         // Garantir que reactions seja sempre um array mesmo em caso de erro
         message.reactions = [];
       }
-      
+
       // Garantir que reactions seja sempre um array (segurança extra)
       if (!Array.isArray(message.reactions)) {
         logger.warn(`Reações não são um array para mensagem ${message.id}, convertendo...`);
         message.reactions = message.reactions ? [message.reactions] : [];
       }
     }
-    
+
     return Array.isArray(messages) ? messageArray : messageArray[0];
   }
 
@@ -66,12 +66,12 @@ export class MessageModel {
       // Caso contrário, filtrar por data
       let query: string;
       let params: any[];
-      
+
       if (maxAgeHours !== undefined && maxAgeHours !== null) {
         // Calcular data limite (últimas X horas)
         const maxAgeDate = new Date();
         maxAgeDate.setHours(maxAgeDate.getHours() - maxAgeHours);
-        
+
         // Buscar últimas mensagens com filtro de tempo
         query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at 
                  FROM messages 
@@ -89,13 +89,13 @@ export class MessageModel {
                  LIMIT ?`;
         params = [conversationId, limit];
       }
-      
+
       const queryResult = await conn.execute(query, params) as any;
 
       logger.debug(`findByConversationId - conversationId=${conversationId}, queryResult type=${typeof queryResult}, isArray=${Array.isArray(queryResult)}`);
 
       let rows: any;
-      
+
       // conn.execute() retorna [rows, metadata] onde rows é um array
       if (Array.isArray(queryResult) && queryResult.length > 0) {
         // Se o primeiro elemento é um array, é o formato [rows, metadata]
@@ -135,7 +135,7 @@ export class MessageModel {
         logger.debug(`findByConversationId - retornando 1 mensagem (objeto único)`);
         return [rows];
       }
-      
+
       logger.warn(`findByConversationId - nenhuma mensagem encontrada ou formato inválido`);
       return [];
     } catch (error: any) {
@@ -150,14 +150,14 @@ export class MessageModel {
     const conn = await pool.getConnection();
     try {
       logger.debug(`Buscando mensagem por message_id: "${messageId}" (tamanho: ${messageId.length})`);
-      
+
       const [rows] = await conn.query(
         'SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at FROM messages WHERE message_id = ?',
         [messageId]
       ) as any[];
-      
+
       logger.debug(`Resultado da busca: ${rows ? rows.length : 0} mensagem(s) encontrada(s)`);
-      
+
       if (rows && rows.length > 0) {
         logger.debug(`Mensagem encontrada: id=${rows[0].id}, message_id="${rows[0].message_id}"`);
       } else {
@@ -170,7 +170,7 @@ export class MessageModel {
           logger.debug(`Mensagens similares encontradas:`, allRows.map((r: any) => ({ id: r.id, message_id: r.message_id })));
         }
       }
-      
+
       const message = rows && rows.length > 0 ? rows[0] : null;
       if (message) {
         return await this.addReactionsToMessages(message) as Message;
@@ -207,14 +207,18 @@ export class MessageModel {
         result = queryResult;
       }
 
-      const insertId = result?.insertId || result?.insertid;
-      
+      const insertId = result?.insertId || result?.insertid || (Array.isArray(result) && result[0]?.insertId);
+
       if (!insertId) {
         throw new Error('Não foi possível obter o ID da mensagem inserida');
       }
 
-      const created = await this.findById(insertId);
+      // Converter BigInt para Number se necessário
+      const id = Number(insertId);
+
+      const created = await this.findById(id);
       if (!created) {
+        logger.error(`MessageModel.create: Erro ao recuperar mensagem criada. insertId=${insertId}`);
         throw new Error('Erro ao criar mensagem');
       }
       return created;
@@ -285,7 +289,7 @@ export class MessageModel {
     const conn = await pool.getConnection();
     try {
       const now = new Date();
-      
+
       if (ack === 1) {
         // Mensagem recebida
         await conn.query(
@@ -304,7 +308,7 @@ export class MessageModel {
         logger.warn(`Ack status desconhecido: ${ack} para mensagem ${messageId}`);
         return false;
       }
-      
+
       return true;
     } catch (error: any) {
       logger.error(`Erro ao atualizar ack status da mensagem ${messageId}: ${error.message}`);
@@ -338,7 +342,7 @@ export class MessageModel {
       logger.debug(`countByConversation - conversationId=${conversationId}, queryResult type=${typeof queryResult}, isArray=${Array.isArray(queryResult)}`);
 
       let rows: any;
-      
+
       // Extrair rows do resultado (pode vir em diferentes formatos)
       if (Array.isArray(queryResult)) {
         if (queryResult.length > 0 && Array.isArray(queryResult[0])) {
@@ -431,7 +435,7 @@ export class MessageModel {
       logger.debug(`findLastClientMessage - conversationId=${conversationId}, queryResult type=${typeof queryResult}, isArray=${Array.isArray(queryResult)}`);
 
       let rows: any;
-      
+
       // conn.execute() retorna [rows, metadata] onde rows é um array
       if (Array.isArray(queryResult) && queryResult.length > 0) {
         // Se o primeiro elemento é um array, é o formato [rows, metadata]

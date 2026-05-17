@@ -1,0 +1,452 @@
+{
+  "generated_at": "2026-05-16T00:00:00Z",
+  "modules": [
+    {
+      "name": "auth",
+      "path": "backend/src",
+      "purpose": "Autenticação e autorização JWT com bcrypt",
+      "primary_files": [
+        "backend/src/controllers/auth.controller.ts",
+        "backend/src/services/auth.service.ts",
+        "backend/src/models/user.model.ts",
+        "backend/src/middleware/auth.ts",
+        "backend/src/routes/auth.routes.ts"
+      ],
+      "functions": [
+        { "name": "register", "file": "backend/src/services/auth.service.ts", "params": ["data: RegisterData"], "returns": "Promise<{user, token}>", "confidence": "confirmed" },
+        { "name": "login", "file": "backend/src/services/auth.service.ts", "params": ["credentials: LoginCredentials"], "returns": "Promise<{user, token}>", "confidence": "confirmed" },
+        { "name": "generateToken", "file": "backend/src/services/auth.service.ts", "params": ["userId: number"], "returns": "string (JWT)", "confidence": "confirmed" },
+        { "name": "authenticateToken", "file": "backend/src/middleware/auth.ts", "params": ["req, res, next"], "returns": "void (middleware)", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "User",
+          "fields": [
+            { "name": "id", "type": "number", "required": true },
+            { "name": "username", "type": "string", "required": true },
+            { "name": "email", "type": "string", "required": true },
+            { "name": "password_hash", "type": "string", "required": true },
+            { "name": "created_at", "type": "Date", "required": true },
+            { "name": "updated_at", "type": "Date", "required": true }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Senha mínima de 6 caracteres", "location": "backend/src/controllers/auth.controller.ts:23", "confidence": "confirmed" },
+        { "description": "Username e email únicos no sistema", "location": "backend/src/services/auth.service.ts:23", "confidence": "confirmed" },
+        { "description": "JWT expira em 7 dias (configurável via JWT_EXPIRES_IN)", "location": "backend/src/services/auth.service.ts:169", "confidence": "confirmed" },
+        { "description": "Token aceito no header Authorization ou query string ?token=", "location": "backend/src/middleware/auth.ts:19", "confidence": "confirmed" }
+      ],
+      "dependencies": [],
+      "algorithms": ["bcrypt hash com saltRounds=10"],
+      "complexity": "low"
+    },
+    {
+      "name": "whatsapp",
+      "path": "backend/src",
+      "purpose": "Integração WhatsApp via whatsapp-web.js, gerenciamento de sessões multi-usuário com Puppeteer",
+      "primary_files": [
+        "backend/src/services/whatsapp.service.ts",
+        "backend/src/services/whatsapp.manager.ts",
+        "backend/src/controllers/whatsapp.controller.ts",
+        "backend/src/models/whatsappSession.model.ts",
+        "backend/src/routes/whatsapp.routes.ts"
+      ],
+      "functions": [
+        { "name": "getInstance", "file": "backend/src/services/whatsapp.manager.ts", "params": [], "returns": "WhatsAppManager (Singleton)", "confidence": "confirmed" },
+        { "name": "initializeService", "file": "backend/src/services/whatsapp.manager.ts", "params": ["userId: number"], "returns": "Promise<WhatsAppService>", "confidence": "confirmed" },
+        { "name": "initialize", "file": "backend/src/services/whatsapp.service.ts", "params": [], "returns": "Promise<void>", "confidence": "confirmed" },
+        { "name": "sendMessage", "file": "backend/src/services/whatsapp.service.ts", "params": ["number: string", "content: string"], "returns": "Promise<Message>", "confidence": "confirmed" },
+        { "name": "getOrCreateSession", "file": "backend/src/models/whatsappSession.model.ts", "params": ["userId: number"], "returns": "Promise<WhatsAppSession>", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "WhatsAppSession",
+          "fields": [
+            { "name": "id", "type": "number", "required": true },
+            { "name": "user_id", "type": "number", "required": true },
+            { "name": "status", "type": "enum", "required": true, "values": ["disconnected", "connecting", "connected", "authenticated", "connection_failed"] },
+            { "name": "qr_code", "type": "string|null", "required": false },
+            { "name": "session_files_path", "type": "string|null", "required": false },
+            { "name": "last_connected_at", "type": "Date|null", "required": false }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Exatamente 1 sessão por usuário (UNIQUE constraint)", "location": "backend/src/models/whatsappSession.model.ts:54", "confidence": "confirmed" },
+        { "description": "Debounce de mensagens: acumula mensagens do mesmo contato antes de chamar a IA", "location": "backend/src/services/whatsapp.service.ts:47", "confidence": "confirmed" },
+        { "description": "Keep-alive: após 4 falhas consecutivas (1h) marca connection_failed", "location": "backend/src/services/whatsapp.service.ts:52", "confidence": "confirmed" },
+        { "description": "No Windows: mata processos Chrome via PowerShell no logout para liberar arquivos de sessão", "location": "backend/src/services/whatsapp.service.ts:82", "confidence": "confirmed" }
+      ],
+      "dependencies": ["conversation"],
+      "algorithms": ["Singleton com Map por userId", "Debounce por conversationId", "Keep-alive com backoff por contagem de erros"],
+      "complexity": "high"
+    },
+    {
+      "name": "conversation",
+      "path": "backend/src",
+      "purpose": "Gestão do ciclo de vida de conversas, pipeline de processamento com IA e interpretação de comandos especiais",
+      "primary_files": [
+        "backend/src/services/conversation.service.ts",
+        "backend/src/controllers/conversation.controller.ts",
+        "backend/src/models/conversation.model.ts",
+        "backend/src/models/message.model.ts",
+        "backend/src/routes/conversation.routes.ts"
+      ],
+      "functions": [
+        { "name": "processIncomingMessage", "file": "backend/src/services/conversation.service.ts", "params": ["userId", "conversationId", "messageContent", "whatsappService"], "returns": "Promise<void>", "confidence": "confirmed" },
+        { "name": "isAutoResponding", "file": "backend/src/services/conversation.service.ts", "params": ["conversationId: number"], "returns": "Promise<boolean>", "confidence": "confirmed" },
+        { "name": "finalizeOldConversations", "file": "backend/src/services/conversation.service.ts", "params": [], "returns": "Promise<number>", "confidence": "confirmed" },
+        { "name": "extractAlertCommand", "file": "backend/src/services/conversation.service.ts", "params": ["response: string"], "returns": "string|null", "confidence": "confirmed" },
+        { "name": "extractMediaCommands", "file": "backend/src/services/conversation.service.ts", "params": ["response: string"], "returns": "number[]", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "Conversation",
+          "fields": [
+            { "name": "id", "type": "number", "required": true },
+            { "name": "user_id", "type": "number", "required": true },
+            { "name": "contact_number", "type": "string", "required": true },
+            { "name": "status", "type": "enum", "required": true, "values": ["new", "in_progress", "paused", "finished"] },
+            { "name": "auto_responding", "type": "boolean|number", "required": false, "default": true },
+            { "name": "needs_intervention", "type": "boolean", "required": false, "default": false }
+          ],
+          "confidence": "confirmed"
+        },
+        {
+          "name": "Message",
+          "fields": [
+            { "name": "direction", "type": "enum", "required": true, "values": ["incoming", "outgoing"] },
+            { "name": "is_from_ai", "type": "boolean", "required": true },
+            { "name": "message_type", "type": "enum", "required": false, "values": ["text", "audio", "media", "reaction", "system", "location", "contact", "other"] }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Comandos especiais na resposta IA: [ALERTA_ATENDENTE:msg], [ENVIAR_MIDIA:id], [CONTATO_PROATIVO:num]", "location": "backend/src/services/conversation.service.ts:173", "confidence": "confirmed" },
+        { "description": "#contatoia na mensagem do cliente omite histórico da conversa ao chamar o LLM", "location": "backend/src/services/conversation.service.ts:148", "confidence": "confirmed" },
+        { "description": "Mídias obrigatórias enviadas ANTES da resposta da IA", "location": "backend/src/services/conversation.service.ts:144", "confidence": "confirmed" },
+        { "description": "Conversas inativas há mais de max_age_hours são finalizadas automaticamente (job 1h)", "location": "backend/src/index.ts:446", "confidence": "confirmed" },
+        { "description": "JOIN com vm_lav_clientes via normaliza_telefone() para enriquecer dados do contato", "location": "backend/src/models/conversation.model.ts:15", "confidence": "confirmed" }
+      ],
+      "dependencies": ["agentConfig", "media", "topic", "indexing", "humanAttendant", "vmLav"],
+      "algorithms": ["Pipeline de extração de comandos por regex", "Promise.race com timeout de 60s para RAG"],
+      "complexity": "high"
+    },
+    {
+      "name": "document",
+      "path": "backend/src",
+      "purpose": "Upload e indexação de documentos (PDF, DOCX, TXT) como base de conhecimento para RAG",
+      "primary_files": [
+        "backend/src/services/document.service.ts",
+        "backend/src/controllers/document.controller.ts",
+        "backend/src/models/document.model.ts",
+        "backend/src/models/documentChunk.model.ts"
+      ],
+      "functions": [
+        { "name": "extractText", "file": "backend/src/services/document.service.ts", "params": ["filePath: string", "fileType: string"], "returns": "Promise<string>", "confidence": "confirmed" },
+        { "name": "chunkText", "file": "backend/src/services/document.service.ts", "params": ["text: string", "chunkSize=1000"], "returns": "string[]", "confidence": "confirmed" },
+        { "name": "indexDocument", "file": "backend/src/services/document.service.ts", "params": ["documentId: number", "userId: number"], "returns": "Promise<void>", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "Document",
+          "fields": [
+            { "name": "file_type", "type": "string", "required": true, "values": [".txt", ".pdf", ".docx"] },
+            { "name": "status", "type": "enum", "required": true, "values": ["pending", "processing", "completed", "error"] },
+            { "name": "file_size", "type": "number", "required": true }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Tipos permitidos: .txt, .pdf, .docx. Limite: 10MB", "location": "backend/src/services/document.service.ts:48", "confidence": "confirmed" },
+        { "description": "Chunk size fixo de 1000 caracteres", "location": "backend/src/services/document.service.ts:18", "confidence": "confirmed" }
+      ],
+      "dependencies": ["indexing", "ollama"],
+      "algorithms": ["Text chunking por tamanho fixo", "Extração de texto: pdf-parse (PDF), mammoth (DOCX)"],
+      "complexity": "medium"
+    },
+    {
+      "name": "agentConfig",
+      "path": "backend/src",
+      "purpose": "Configuração do agente IA: personalidade, modelos LLM, parâmetros de geração",
+      "primary_files": [
+        "backend/src/models/agentConfig.model.ts",
+        "backend/src/controllers/agentConfig.controller.ts",
+        "backend/src/routes/agentConfig.routes.ts"
+      ],
+      "functions": [
+        { "name": "upsert", "file": "backend/src/models/agentConfig.model.ts", "params": ["config: AgentConfig"], "returns": "Promise<AgentConfig>", "confidence": "confirmed" },
+        { "name": "findByUserId", "file": "backend/src/models/agentConfig.model.ts", "params": ["userId: number"], "returns": "Promise<AgentConfig|null>", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "AgentConfig",
+          "fields": [
+            { "name": "embedding_model", "type": "string", "required": false, "default": "deepseek-r1" },
+            { "name": "generation_model", "type": "string", "required": false, "default": "deepseek-r1" },
+            { "name": "temperature", "type": "number", "required": false, "default": 0.7 },
+            { "name": "top_p", "type": "number", "required": false, "default": 0.9 },
+            { "name": "top_k", "type": "number", "required": false, "default": 40 },
+            { "name": "repeat_penalty", "type": "number", "required": false, "default": 1.1 },
+            { "name": "max_age_hours", "type": "number", "required": false, "default": 12 }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "1 configuração por usuário (upsert pattern)", "location": "backend/src/models/agentConfig.model.ts:180", "confidence": "confirmed" }
+      ],
+      "dependencies": [],
+      "algorithms": [],
+      "complexity": "low"
+    },
+    {
+      "name": "media",
+      "path": "backend/src",
+      "purpose": "Gerenciamento de mídias para envio automático e base de conhecimento multimodal",
+      "primary_files": [
+        "backend/src/services/media.service.ts",
+        "backend/src/controllers/media.controller.ts",
+        "backend/src/models/media.model.ts",
+        "backend/src/models/mediaSentTracking.model.ts"
+      ],
+      "entities": [
+        {
+          "name": "Media",
+          "fields": [
+            { "name": "file_type", "type": "enum", "required": true, "values": ["video", "image", "document", "audio"] },
+            { "name": "source", "type": "enum", "required": false, "values": ["outgoing", "incoming"] },
+            { "name": "mandatory_send", "type": "boolean", "required": false, "default": false },
+            { "name": "is_active", "type": "boolean", "required": true, "default": true }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Mídias com mandatory_send=true enviadas automaticamente no início de toda conversa", "location": "backend/src/services/conversation.service.ts:144", "confidence": "confirmed" }
+      ],
+      "dependencies": ["indexing"],
+      "algorithms": [],
+      "complexity": "medium"
+    },
+    {
+      "name": "topic",
+      "path": "backend/src",
+      "purpose": "Tópicos estruturados com keywords para guiar respostas da IA",
+      "primary_files": [
+        "backend/src/services/topic.service.ts",
+        "backend/src/controllers/topic.controller.ts",
+        "backend/src/models/topic.model.ts"
+      ],
+      "entities": [
+        {
+          "name": "Topic",
+          "fields": [
+            { "name": "trigger_keywords", "type": "string[]", "required": true },
+            { "name": "context", "type": "enum", "required": true, "values": ["greeting", "farewell", "absence", "special_date", "custom"] },
+            { "name": "priority", "type": "number", "required": true, "default": 0 }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [],
+      "dependencies": ["indexing"],
+      "algorithms": [],
+      "complexity": "low"
+    },
+    {
+      "name": "indexing",
+      "path": "backend/src",
+      "purpose": "Pipeline RAG com busca híbrida (trigger keywords + similaridade vetorial + prioridade)",
+      "primary_files": [
+        "backend/src/services/rag.service.ts",
+        "backend/src/services/chromadb.service.ts",
+        "backend/src/services/indexing.service.ts",
+        "backend/src/controllers/indexing.controller.ts",
+        "backend/src/utils/chromaManager.ts"
+      ],
+      "functions": [
+        { "name": "processMessageAndRespond", "file": "backend/src/services/rag.service.ts", "params": ["userId", "conversationId", "message", "useRag", "includeHistory"], "returns": "Promise<string>", "confidence": "confirmed" },
+        { "name": "normalizeQuery", "file": "backend/src/services/rag.service.ts", "params": ["query: string"], "returns": "string[]", "confidence": "confirmed" },
+        { "name": "rankTopics", "file": "backend/src/services/rag.service.ts", "params": ["topicsWithKeywords", "vectorResults"], "returns": "Promise<ScoredResult[]>", "confidence": "confirmed" },
+        { "name": "calculateScore", "file": "backend/src/services/rag.service.ts", "params": ["hasTriggerKeyword", "vectorSimilarity", "priority"], "returns": "number", "confidence": "confirmed" }
+      ],
+      "business_rules": [
+        { "description": "Score = 0.5×trigger_kw + 0.3×vector_sim + 0.2×priority", "location": "backend/src/services/rag.service.ts:74", "confidence": "confirmed" },
+        { "description": "Threshold de distância máxima: 0.8", "location": "backend/src/services/rag.service.ts:26", "confidence": "confirmed" },
+        { "description": "Timeout de 60s para geração de resposta", "location": "backend/src/services/conversation.service.ts:157", "confidence": "confirmed" },
+        { "description": "Coleção ChromaDB isolada por usuário: user_{userId}", "location": "backend/src/services/chromadb.service.ts:24", "confidence": "confirmed" }
+      ],
+      "dependencies": ["ollama", "agentConfig", "topic", "media", "vmLav"],
+      "algorithms": ["Re-ranking híbrido ponderado", "Remoção de stopwords PT-BR (lista de ~50 palavras)", "Chunking de documentos por tamanho fixo (1000 chars)"],
+      "complexity": "high"
+    },
+    {
+      "name": "ollama",
+      "path": "backend/src",
+      "purpose": "Interface com LLM local Ollama para geração de texto e embeddings",
+      "primary_files": [
+        "backend/src/services/ollama.service.ts",
+        "backend/src/controllers/ollama.controller.ts",
+        "backend/src/routes/ollama.routes.ts"
+      ],
+      "functions": [
+        { "name": "generateEmbedding", "file": "backend/src/services/ollama.service.ts", "params": ["text: string", "model?: string"], "returns": "Promise<number[]>", "confidence": "confirmed" },
+        { "name": "generateResponse", "file": "backend/src/services/ollama.service.ts", "params": ["prompt: string", "model?: string", "options?"], "returns": "Promise<string>", "confidence": "confirmed" },
+        { "name": "listModels", "file": "backend/src/services/ollama.service.ts", "params": [], "returns": "Promise<OllamaModel[]>", "confidence": "confirmed" }
+      ],
+      "business_rules": [
+        { "description": "HTTP keep-alive: maxSockets=5, keepAliveMsecs=1000ms para reutilizar conexões TCP", "location": "backend/src/services/ollama.service.ts:22", "confidence": "confirmed" },
+        { "description": "keep_alive=5m mantém modelo carregado em memória após uso", "location": "backend/src/services/ollama.service.ts:66", "confidence": "confirmed" },
+        { "description": "Timeout de 60s por requisição", "location": "backend/src/services/ollama.service.ts:45", "confidence": "confirmed" }
+      ],
+      "dependencies": [],
+      "algorithms": [],
+      "complexity": "low"
+    },
+    {
+      "name": "humanAttendant",
+      "path": "backend/src",
+      "purpose": "Gestão de atendentes humanos e alertas automáticos quando IA detecta necessidade de intervenção",
+      "primary_files": [
+        "backend/src/services/humanAttendant.service.ts",
+        "backend/src/controllers/humanAttendant.controller.ts",
+        "backend/src/models/humanAttendant.model.ts",
+        "backend/src/models/attendantAlert.model.ts"
+      ],
+      "entities": [
+        {
+          "name": "HumanAttendant",
+          "fields": [
+            { "name": "phone_number", "type": "string", "required": true },
+            { "name": "is_active", "type": "boolean", "required": true, "default": true }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Alertas disparados quando IA inclui [ALERTA_ATENDENTE] na resposta", "location": "backend/src/services/conversation.service.ts:185", "confidence": "confirmed" }
+      ],
+      "dependencies": [],
+      "algorithms": [],
+      "complexity": "low"
+    },
+    {
+      "name": "vmLav",
+      "path": "backend/src",
+      "purpose": "Integração com API externa VM Lavanderia: sincronização de clientes, pedidos e vouchers",
+      "primary_files": [
+        "backend/src/services/vmLav.service.ts",
+        "backend/src/services/vmLavConnectionManager.service.ts",
+        "backend/src/controllers/vmLav.controller.ts",
+        "backend/src/utils/vmLavScheduler.ts",
+        "backend/src/utils/vmLavTokenRenewal.ts"
+      ],
+      "functions": [
+        { "name": "configurarCredenciais", "file": "backend/src/services/vmLav.service.ts", "params": ["userId", "email", "senha", "onCaptchaReady?"], "returns": "Promise<{success, message, credentialsId?}>", "confidence": "confirmed" },
+        { "name": "sincronizarClientes", "file": "backend/src/services/vmLav.service.ts", "params": ["userId: number"], "returns": "Promise<void>", "confidence": "inferred" },
+        { "name": "sincronizarPedidos", "file": "backend/src/services/vmLav.service.ts", "params": ["userId: number"], "returns": "Promise<void>", "confidence": "inferred" }
+      ],
+      "entities": [
+        {
+          "name": "VmLavCliente",
+          "fields": [
+            { "name": "cpf", "type": "string", "required": true },
+            { "name": "nome", "type": "string", "required": true },
+            { "name": "telefone", "type": "string", "required": false },
+            { "name": "data_ultima_compra", "type": "Date", "required": false },
+            { "name": "qtd_compras", "type": "number", "required": false }
+          ],
+          "confidence": "confirmed"
+        },
+        {
+          "name": "VmLavPedido",
+          "fields": [
+            { "name": "tipo_servico", "type": "string", "required": true, "values": ["Lavagem", "Secagem"] },
+            { "name": "situacao_venda", "type": "string", "required": true },
+            { "name": "pago_com_fidelidade", "type": "boolean", "required": true, "default": false }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "idEmpresa=1737, empresaLocalizador='lavateriajdnovomundo' hardcoded", "location": "backend/src/services/vmLav.service.ts:87", "confidence": "confirmed" },
+        { "description": "Serviços: LAVAGEM (id=3837), SECAGEM (id=3838) hardcoded", "location": "backend/src/services/vmLav.service.ts:89", "confidence": "confirmed" },
+        { "description": "Prevenção de execução simultânea via Map<userId, boolean>", "location": "backend/src/services/vmLav.service.ts:95", "confidence": "confirmed" },
+        { "description": "Autenticação inicial via Puppeteer (scraping de login com CAPTCHA)", "location": "backend/src/services/vmLav.service.ts:109", "confidence": "confirmed" }
+      ],
+      "dependencies": ["auth"],
+      "algorithms": ["Puppeteer scraping para login", "Token renewal com retry"],
+      "complexity": "high"
+    },
+    {
+      "name": "fidelizacao",
+      "path": "backend/src",
+      "purpose": "Programa de pontos de fidelidade baseado em utilizações de serviços da lavanderia, com motor de automação de mensagens",
+      "primary_files": [
+        "backend/src/services/fidelizacao.service.ts",
+        "backend/src/services/fidelizacaoRegras.service.ts",
+        "backend/src/services/fidelizacaoNotificacao.service.ts",
+        "backend/src/services/fidelizacaoVoucherAuto.service.ts",
+        "backend/src/controllers/fidelizacao.controller.ts",
+        "backend/src/controllers/fidelizacaoRegras.controller.ts"
+      ],
+      "functions": [
+        { "name": "contarUtilizacoes", "file": "backend/src/services/fidelizacao.service.ts", "params": ["userId", "cpf", "dataInicio", "dataFim?"], "returns": "Promise<{lavagens, secagens, total}>", "confidence": "confirmed" },
+        { "name": "processarRegrasUsuario", "file": "backend/src/services/fidelizacaoRegras.service.ts", "params": ["userId: number"], "returns": "Promise<void>", "confidence": "confirmed" }
+      ],
+      "entities": [
+        {
+          "name": "FidelizacaoRegra",
+          "fields": [
+            { "name": "tipo_gatilho_id", "type": "number", "required": true },
+            { "name": "template_mensagem", "type": "string", "required": true },
+            { "name": "is_ativo", "type": "boolean", "required": true },
+            { "name": "vigencia_inicio", "type": "Date", "required": false },
+            { "name": "vigencia_fim", "type": "Date", "required": false },
+            { "name": "segmentacao_publico", "type": "JSON", "required": false },
+            { "name": "intervalo_verificacao", "type": "number", "required": false }
+          ],
+          "confidence": "confirmed"
+        },
+        {
+          "name": "Premio",
+          "fields": [
+            { "name": "meta", "type": "number", "required": true },
+            { "name": "tipo_servico", "type": "enum", "required": true, "values": ["Lavagem", "Secagem", "Total"] }
+          ],
+          "confidence": "confirmed"
+        }
+      ],
+      "business_rules": [
+        { "description": "Apenas pedidos com situacao_venda=Sucesso e pago_com_fidelidade=0 contam para fidelidade", "location": "backend/src/services/fidelizacao.service.ts:96", "confidence": "confirmed" },
+        { "description": "Anti-spam: bloqueio semanal, mensal e por intervalo mínimo configurável", "location": "backend/src/services/fidelizacaoRegras.service.ts:40", "confidence": "confirmed" },
+        { "description": "Segmentação de público via JSON de filtros (dias_sem_compra, aniversário, etc.)", "location": "backend/src/services/fidelizacaoRegras.service.ts:11", "confidence": "confirmed" }
+      ],
+      "dependencies": ["vmLav", "whatsapp"],
+      "algorithms": ["Motor de disparo com validação de vigência e anti-spam", "Cálculo de saldo por tipo de serviço e janela temporal"],
+      "complexity": "high"
+    },
+    {
+      "name": "testChat",
+      "path": "backend/src",
+      "purpose": "Interface de teste do pipeline RAG sem envio real pelo WhatsApp",
+      "primary_files": [
+        "backend/src/controllers/testChat.controller.ts",
+        "backend/src/routes/testChat.routes.ts",
+        "backend/src/utils/testChatLogger.ts"
+      ],
+      "functions": [],
+      "entities": [],
+      "business_rules": [],
+      "dependencies": ["indexing", "agentConfig"],
+      "algorithms": [],
+      "complexity": "low"
+    }
+  ]
+}

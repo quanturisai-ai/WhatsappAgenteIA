@@ -287,6 +287,15 @@ export const resolveIntervention = async (
       intervention_resolved_at: new Date(),
     });
 
+    // Emitir via socket para atualização em tempo real
+    try {
+      const { emitConversationUpdated } = await import('../utils/conversationSocketEmitter');
+      const card = await conversationModel.getConversationCardById(userId, conversationId);
+      if (card) emitConversationUpdated(userId, card);
+    } catch (err: any) {
+      // Não falhar a requisição por erro no socket
+    }
+
     res.json({
       message: 'Intervenção marcada como resolvida',
     });

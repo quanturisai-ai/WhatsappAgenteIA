@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-05-16T00:00:00Z",
+  "project_root": "C:\\WhatsappAgenteIA",
+  "languages": [
+    { "name": "TypeScript", "extensions": [".ts"], "file_count": 137 },
+    { "name": "TypeScript React", "extensions": [".tsx"], "file_count": 19 },
+    { "name": "SQL", "extensions": [".sql"], "file_count": 35 },
+    { "name": "JavaScript", "extensions": [".js"], "file_count": 17 },
+    { "name": "Python", "extensions": [".py"], "file_count": 2 }
+  ],
+  "primary_language": "TypeScript",
+  "frameworks": [
+    { "name": "Express", "version": "^4.18.2", "source": "backend/package.json" },
+    { "name": "Socket.IO", "version": "^4.7.2", "source": "backend/package.json" },
+    { "name": "whatsapp-web.js", "version": "^1.34.6", "source": "backend/package.json" },
+    { "name": "LangChain", "version": "^1.0.2", "source": "backend/package.json" },
+    { "name": "ChromaDB Client", "version": "^1.8.1", "source": "backend/package.json" },
+    { "name": "React", "version": "^18.2.0", "source": "frontend/package.json" },
+    { "name": "Vite", "version": "^5.0.8", "source": "frontend/package.json" },
+    { "name": "Tailwind CSS", "version": "^3.4.0", "source": "frontend/package.json" },
+    { "name": "Zustand", "version": "^4.4.7", "source": "frontend/package.json" },
+    { "name": "FastAPI", "version": "0.115.0", "source": "whisper-service/requirements.txt" },
+    { "name": "faster-whisper", "version": "1.1.0", "source": "whisper-service/requirements.txt" }
+  ],
+  "package_manager": "npm",
+  "entry_points": [
+    { "path": "backend/src/index.ts", "type": "server_entry" },
+    { "path": "frontend/src/main.tsx", "type": "app_entry" },
+    { "path": "whisper-service/main.py", "type": "service_entry" }
+  ],
+  "config_files": [
+    "backend/.env",
+    "config/services.json",
+    "config/paths.json",
+    "config/environment.env",
+    "backend/src/config/database.ts"
+  ],
+  "ci_cd": [],
+  "docker": null,
+  "database_hints": [
+    { "path": "backend/src/config/database.schema.sql", "type": "sql_schema" },
+    { "path": "backend/src/config/migrations/", "type": "migrations_dir" },
+    { "path": "backend/chroma_db/", "type": "vector_db_data" }
+  ],
+  "test_framework": null,
+  "test_file_count": 0,
+  "modules": [
+    "auth",
+    "whatsapp",
+    "conversation",
+    "document",
+    "agentConfig",
+    "media",
+    "topic",
+    "indexing",
+    "testChat",
+    "ollama",
+    "humanAttendant",
+    "vmLav",
+    "fidelizacao"
+  ],
+  "total_files": 210,
+  "organization_suggestion": {
+    "granularity": "endpoint",
+    "rationale": "O backend usa roteamento centralizado com Express Router, com 13 grupos de rotas registrados em /api/<domínio> no index.ts.",
+    "signals": [
+      {
+        "type": "centralized_routing",
+        "evidence": [
+          "backend/src/index.ts",
+          "backend/src/routes/auth.routes.ts",
+          "backend/src/routes/whatsapp.routes.ts",
+          "backend/src/routes/conversation.routes.ts",
+          "backend/src/routes/fidelizacao.routes.ts",
+          "backend/src/routes/vmLav.routes.ts"
+        ]
+      }
+    ],
+    "features": []
+  }
+}

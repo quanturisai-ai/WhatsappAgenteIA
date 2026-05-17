@@ -45,7 +45,7 @@ export interface Message {
   id: number;
   messageId?: string | null; // message_id da mensagem (para identificar em eventos Socket.IO)
   content: string;
-  messageType?: 'text' | 'media' | 'reaction' | 'system' | 'location' | 'contact' | 'other';
+  messageType?: 'text' | 'audio' | 'media' | 'reaction' | 'system' | 'location' | 'contact' | 'other';
   direction: 'incoming' | 'outgoing';
   isFromAi: boolean;
   createdAt: string;
@@ -55,7 +55,7 @@ export interface Message {
   media?: {
     id: number;
     filename: string;
-    fileType: 'video' | 'image' | 'document';
+    fileType: 'video' | 'image' | 'document' | 'audio';
     fileSize: number;
     title: string;
     description: string;

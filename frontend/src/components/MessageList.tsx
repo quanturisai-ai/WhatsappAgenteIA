@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Message } from '../types';
 import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, User, Check, CheckCheck, Image, Video, FileText } from 'lucide-react';
+import { Bot, User, Check, CheckCheck, Image, Video, FileText, Mic } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
 
@@ -266,7 +266,38 @@ export const MessageList = ({ messages, conversationId }: MessageListProps) => {
                               }`} />
                             </div>
                           )}
-                          {(message.media.caption || message.content) && (
+                          {message.media.fileType === 'audio' && (
+                            <div className={`w-full p-3 ${
+                              message.direction === 'outgoing'
+                                ? message.isFromAi
+                                  ? 'bg-primary-700'
+                                  : 'bg-gray-200'
+                                : 'bg-gray-100'
+                            }`}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Mic className={`w-4 h-4 flex-shrink-0 ${
+                                  message.direction === 'outgoing'
+                                    ? message.isFromAi ? 'text-white' : 'text-gray-600'
+                                    : 'text-gray-500'
+                                }`} />
+                                <span className={`text-xs font-medium ${
+                                  message.direction === 'outgoing'
+                                    ? message.isFromAi ? 'text-white' : 'text-gray-700'
+                                    : 'text-gray-600'
+                                }`}>Áudio do cliente</span>
+                              </div>
+                              <audio
+                                controls
+                                className="w-full"
+                                preload="metadata"
+                                src={`${API_URL}/medias/${message.media.id}/file?token=${localStorage.getItem('token')}`}
+                              >
+                                Seu navegador não suporta reprodução de áudio.
+                              </audio>
+                            </div>
+                          )}
+                          {/* Legenda curta sob a mídia: caption da mídia ou nada (o texto completo fica no bloco abaixo) */}
+                          {message.media.fileType !== 'audio' && message.media.caption && (
                             <div className={`p-2 ${
                               message.direction === 'outgoing'
                                 ? message.isFromAi
@@ -281,16 +312,32 @@ export const MessageList = ({ messages, conversationId }: MessageListProps) => {
                                     : 'text-gray-900'
                                   : 'text-gray-900'
                               }`}>
-                                {message.media.caption || message.content}
+                                {message.media.caption}
                               </p>
                             </div>
                           )}
                         </div>
                       </div>
                     )}
-                    {/* Exibir conteúdo de texto apenas se não for mídia ou se tiver conteúdo além da mídia */}
-                    {(!message.media || (message.content && !message.media.caption)) && (
-                      <p className="text-sm whitespace-pre-wrap">{message.content || '(sem conteúdo)'}</p>
+                    {/* Indicador de áudio transcrito (apenas quando não há player de áudio) */}
+                    {message.messageType === 'audio' && !message.media && (
+                      <div className="flex items-center gap-2 mb-1">
+                        <Mic className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                        <span className="text-xs text-gray-400 italic">Áudio transcrito</span>
+                      </div>
+                    )}
+                    {/* Exibir conteúdo de texto: sempre que houver content (inclui mensagens da IA com mídia) */}
+                    {message.content && String(message.content).trim() !== '' && (
+                      <>
+                        {message.media?.fileType === 'audio' && (
+                          <p className={`text-xs italic mb-0.5 ${
+                            message.direction === 'outgoing'
+                              ? message.isFromAi ? 'text-primary-200' : 'text-gray-500'
+                              : 'text-gray-400'
+                          }`}>Transcrição:</p>
+                        )}
+                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      </>
                     )}
                     
                     <div className="flex items-center justify-end gap-1 mt-1">

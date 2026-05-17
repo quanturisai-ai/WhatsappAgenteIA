@@ -7,7 +7,7 @@ export class MediaModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        `SELECT id, user_id, filename, file_path, file_type, file_size, 
+        `SELECT id, user_id, filename, file_path, file_type, source, file_size, 
          title, description, caption, status, error_message, is_active, mandatory_send,
          last_indexed_at, indexing_status, content_hash,
          created_at, updated_at 
@@ -43,11 +43,11 @@ export class MediaModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        `SELECT id, user_id, filename, file_path, file_type, file_size, 
+        `SELECT id, user_id, filename, file_path, file_type, source, file_size, 
          title, description, caption, status, error_message, is_active, mandatory_send,
          last_indexed_at, indexing_status, content_hash,
          created_at, updated_at 
-         FROM medias WHERE user_id = ? 
+         FROM medias WHERE user_id = ? AND (source IS NULL OR source = 'outgoing')
          ORDER BY created_at DESC`,
         [userId]
       ) as any;
@@ -79,12 +79,13 @@ export class MediaModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        'INSERT INTO medias (user_id, filename, file_path, file_type, file_size, title, description, caption, status, error_message, is_active, mandatory_send, indexing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO medias (user_id, filename, file_path, file_type, source, file_size, title, description, caption, status, error_message, is_active, mandatory_send, indexing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           media.user_id,
           media.filename,
           media.file_path,
           media.file_type,
+          media.source || 'outgoing',
           media.file_size,
           media.title,
           media.description,
@@ -197,12 +198,13 @@ export class MediaModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        `SELECT id, user_id, filename, file_path, file_type, file_size, 
+        `SELECT id, user_id, filename, file_path, file_type, source, file_size, 
          title, description, caption, status, error_message, is_active, mandatory_send,
          last_indexed_at, indexing_status, content_hash,
          created_at, updated_at 
          FROM medias 
          WHERE user_id = ? AND mandatory_send = TRUE AND is_active = TRUE AND status = 'completed'
+           AND (source IS NULL OR source = 'outgoing')
          ORDER BY created_at ASC`,
         [userId]
       ) as any;
@@ -240,12 +242,13 @@ export class MediaModel {
       // Buscar todas as mídias ativas e completas do usuário
       // Usar apenas is_active para determinar se entra na busca
       const queryResult = await conn.query(
-        `SELECT id, user_id, filename, file_path, file_type, file_size, 
+        `SELECT id, user_id, filename, file_path, file_type, source, file_size, 
          title, description, caption, status, error_message, is_active, mandatory_send,
          last_indexed_at, indexing_status, content_hash,
          created_at, updated_at 
          FROM medias 
          WHERE user_id = ? AND is_active = TRUE AND status = 'completed'
+           AND (source IS NULL OR source = 'outgoing')
          ORDER BY created_at DESC`,
         [userId]
       ) as any;
