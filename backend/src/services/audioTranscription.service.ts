@@ -72,16 +72,33 @@ export class AudioTranscriptionService {
     const doRequest = async (): Promise<TranscriptionResult | null> => {
       const startMs = Date.now();
       try {
-        const { data } = await axios.post<{ text?: string; usage?: any }>(
-          `${this.baseUrl}/audio/transcriptions`,
-          {
-            model: this.model,
-            input_audio: {
-              data: base64Audio,
-              format,
-            },
-            language: this.language,
-          },
+        // Modelos de STT (whisper/transcribe) usam /audio/transcriptions; os demais (ex.: Gemini)
+        // recebem o áudio no chat. Teste de 27/10 (n=3): Gemini 2.5 Flash Lite transcreveu certo,
+        // o whisper-large-v3-turbo acrescentou um "Obrigado" que não foi dito.
+        const viaChat = !/whisper|transcri/i.test(this.model);
+        const { data: resposta } = await axios.post<any>(
+          viaChat ? `${this.baseUrl}/chat/completions` : `${this.baseUrl}/audio/transcriptions`,
+          viaChat
+            ? {
+                model: this.model,
+                temperature: 0,
+                max_tokens: 2000,
+                messages: [{
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: `Transcreva este áudio (idioma: ${this.language}). Responda só com o texto falado, sem comentários. Se não houver fala, responda vazio.` },
+                    { type: 'input_audio', input_audio: { data: base64Audio, format } },
+                  ],
+                }],
+              }
+            : {
+                model: this.model,
+                input_audio: {
+                  data: base64Audio,
+                  format,
+                },
+                language: this.language,
+              },
           {
             headers: {
               Authorization: `Bearer ${this.apiKey}`,
@@ -93,6 +110,9 @@ export class AudioTranscriptionService {
           },
         );
 
+        const data: { text?: string; usage?: any } = viaChat
+          ? { text: resposta?.choices?.[0]?.message?.content?.trim(), usage: resposta?.usage }
+          : resposta;
         const transcriptionTime = (Date.now() - startMs) / 1000;
 
         if (data && typeof data.text === 'string') {

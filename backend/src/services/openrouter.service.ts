@@ -186,6 +186,9 @@ export class OpenRouterService {
         reasoning: { effort: 'none', exclude: true },
         // Limitar tokens de saída para respostas rápidas no WhatsApp
         max_tokens: 1024,
+        // Fornecedor mais rápido do modelo: no teste de 27/10 (n=5) o padrão caía num fornecedor
+        // lento (2-18 s) e com 3/10 respostas vazias; o mais rápido respondeu em <1,5 s, 5/5 e mais barato.
+        provider: { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' },
       };
 
       if (options?.temperature !== undefined) {
