@@ -31,9 +31,11 @@ interface MediaDownload {
 interface SeqFile {
   instance_id?: string;
   seq?: number;
+  ids?: string[];
 }
 
 interface Envelope {
+  id?: string;
   type?: string;
   instance_id?: string;
   chat_jid?: string;
@@ -50,6 +52,9 @@ export class SyncZapClient extends EventEmitter {
   private readonly instanceId: string;
   private waState = 'UNPAIRED';
   private lastSeq = 0;
+  // O gateway pode emitir mais de um evento com o mesmo seq (ex.: media.ready usa o seq
+  // da mensagem). Por isso a deduplicação no último seq é pelo id do evento.
+  private idsNoSeq = new Set<string>();
   private stopping = false;
   private streamAbort: AbortController | null = null;
   private wake: (() => void) | null = null;
@@ -351,7 +356,7 @@ export class SyncZapClient extends EventEmitter {
     this.assertConfig();
     const q = new URLSearchParams();
     q.set('instance_id', this.instanceId);
-    if (this.lastSeq > 0) q.set('from_seq', String(this.lastSeq + 1));
+    if (this.lastSeq > 0) q.set('from_seq', String(this.lastSeq));
     const ctrl = new AbortController();
     this.streamAbort = ctrl;
     const res = await fetch(`${this.baseUrl}/api/v1/events/stream?${q.toString()}`, {
@@ -416,7 +421,9 @@ export class SyncZapClient extends EventEmitter {
 
   private handleEnvelope(ev: Envelope): void {
     const seq = typeof ev.seq === 'number' ? ev.seq : 0;
-    if (seq > 0 && seq <= this.lastSeq) return;
+    const evId = ev.id || `${ev.type}:${seq}`;
+    if (seq > 0 && seq < this.lastSeq) return;
+    if (seq > 0 && seq === this.lastSeq && this.idsNoSeq.has(evId)) return;
     const tipo = ev.type || '';
     if (tipo === 'message.received') {
       this.onMessage(ev);
@@ -425,7 +432,7 @@ export class SyncZapClient extends EventEmitter {
     } else if (this.isRecent(ev.occurred_at)) {
       this.noteControl(tipo, asObject(ev.payload));
     }
-    if (seq > this.lastSeq) this.persistSeq(seq);
+    if (seq > 0) this.persistSeq(seq, evId);
   }
 
   private noteControl(tipo: string, payload: Record<string, any>): void {
@@ -671,17 +678,22 @@ export class SyncZapClient extends EventEmitter {
       const parsed = JSON.parse(raw) as SeqFile;
       if (parsed.instance_id && parsed.instance_id !== this.instanceId) return 0;
       const seq = Number(parsed.seq || 0);
+      if (seq > 0 && Array.isArray(parsed.ids)) this.idsNoSeq = new Set(parsed.ids);
       return seq > 0 ? seq : 0;
     } catch {
       return 0;
     }
   }
 
-  private persistSeq(seq: number): void {
-    this.lastSeq = seq;
+  private persistSeq(seq: number, evId: string): void {
+    if (seq > this.lastSeq) {
+      this.lastSeq = seq;
+      this.idsNoSeq = new Set();
+    }
+    this.idsNoSeq.add(evId);
     try {
       fs.mkdirSync(path.dirname(SEQ_FILE), { recursive: true });
-      fs.writeFileSync(SEQ_FILE, JSON.stringify({ instance_id: this.instanceId, seq }));
+      fs.writeFileSync(SEQ_FILE, JSON.stringify({ instance_id: this.instanceId, seq: this.lastSeq, ids: [...this.idsNoSeq] }));
     } catch (error: any) {
       logger.warn(`SyncZap não gravou o cursor de eventos: ${error.message}`);
     }
