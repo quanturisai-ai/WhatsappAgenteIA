@@ -11,6 +11,8 @@ import logger from '../utils/logger';
 
 const CONTRACT_VERSION = '1.0.0';
 const MEDIA_WAIT_MS = 60_000;
+const SEND_WAIT_MS = 30_000;
+const DESFECHOS_MAX = 500;
 const STATUS_EVENT_MAX_AGE_MS = 120_000;
 const SEQ_FILE = path.join(__dirname, '..', '..', 'whatsapp_sessions', 'synczap-seq.json');
 
@@ -70,6 +72,10 @@ export class SyncZapClient extends EventEmitter {
 
   private mediaReady = new Map<string, MediaPronta>();
   private mediaFailed = new Map<string, string>();
+  // Desfecho do envio (message.sent / message.failed) por message_id. O evento pode chegar
+  // pelo stream antes da resposta do POST, por isso fica guardado até alguém esperar.
+  private desfechos = new Map<string, string | null>();
+  private envioWaiters = new Map<string, (erro: string | null) => void>();
   private mediaWaiters = new Map<string, Array<{ resolve: (m: MediaPronta) => void; reject: (e: Error) => void }>>();
 
   constructor() {
@@ -192,6 +198,12 @@ export class SyncZapClient extends EventEmitter {
 
     if (!messageId) {
       throw new Error('SyncZap aceitou o envio sem message_id');
+    }
+    // Como no whatsapp-web.js, sendMessage só resolve se o WhatsApp aceitou: falha vira exceção
+    // para o chamador não gravar como enviada uma mensagem que não saiu.
+    const erroEnvio = await this.aguardarDesfecho(messageId);
+    if (erroEnvio) {
+      throw new Error(`SyncZap não enviou a mensagem: ${erroEnvio}`);
     }
 
     const msg = this.buildMessage({
@@ -429,10 +441,50 @@ export class SyncZapClient extends EventEmitter {
       this.onMessage(ev);
     } else if (tipo === 'media.ready' || tipo === 'media.failed') {
       this.onMedia(tipo, asObject(ev.payload));
+    } else if (tipo === 'message.sent' || tipo === 'message.failed') {
+      this.onDesfecho(tipo, asObject(ev.payload));
     } else if (this.isRecent(ev.occurred_at)) {
       this.noteControl(tipo, asObject(ev.payload));
     }
     if (seq > 0) this.persistSeq(seq, evId);
+  }
+
+  private onDesfecho(tipo: string, payload: Record<string, any>): void {
+    const id = String(payload.message_id || '');
+    if (!id) return;
+    const erro = tipo === 'message.failed' ? String(payload.error || payload.reason || payload.error_code || 'message.failed') : null;
+    const waiter = this.envioWaiters.get(id);
+    if (waiter) {
+      this.envioWaiters.delete(id);
+      waiter(erro);
+      return;
+    }
+    this.desfechos.set(id, erro);
+    if (this.desfechos.size > DESFECHOS_MAX) {
+      const maisAntigo = this.desfechos.keys().next().value;
+      if (maisAntigo !== undefined) this.desfechos.delete(maisAntigo);
+    }
+  }
+
+  // Espera o message.sent/message.failed do envio. Sem desfecho no prazo, segue como aceito
+  // (a fila do SyncZap ainda pode entregar) e registra o aviso.
+  private aguardarDesfecho(messageId: string): Promise<string | null> {
+    if (this.desfechos.has(messageId)) {
+      const erro = this.desfechos.get(messageId) ?? null;
+      this.desfechos.delete(messageId);
+      return Promise.resolve(erro);
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.envioWaiters.delete(messageId);
+        logger.warn(`SyncZap: sem message.sent/failed em ${SEND_WAIT_MS / 1000}s para ${messageId}; seguindo como aceito`);
+        resolve(null);
+      }, SEND_WAIT_MS);
+      this.envioWaiters.set(messageId, (erro) => {
+        clearTimeout(timer);
+        resolve(erro);
+      });
+    });
   }
 
   private noteControl(tipo: string, payload: Record<string, any>): void {
