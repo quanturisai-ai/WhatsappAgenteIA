@@ -4,6 +4,7 @@ import { FidelizacaoNotificacaoModel } from '../models/fidelizacaoNotificacao.mo
 import { VmLavClienteModel, VmLavCliente } from '../models/vmLavCliente.model';
 import { PremioModel, Premio } from '../models/premio.model';
 import { PremioClienteModel, PremioCliente } from '../models/premioCliente.model';
+import { ConversationModel } from '../models/conversation.model';
 import { FidelizacaoService, SaldoFidelidade } from './fidelizacao.service';
 import { WhatsAppManager } from './whatsapp.manager';
 
@@ -19,6 +20,7 @@ export class FidelizacaoNotificacaoService {
   private clienteModel: VmLavClienteModel;
   private premioModel: PremioModel;
   private premioClienteModel: PremioClienteModel;
+  private conversationModel: ConversationModel;
   private fidelizacaoService: FidelizacaoService;
 
   constructor() {
@@ -27,7 +29,24 @@ export class FidelizacaoNotificacaoService {
     this.clienteModel = new VmLavClienteModel();
     this.premioModel = new PremioModel();
     this.premioClienteModel = new PremioClienteModel();
+    this.conversationModel = new ConversationModel();
     this.fidelizacaoService = new FidelizacaoService();
+  }
+
+  /**
+   * Busca o LID já conhecido para um telefone (via conversas existentes), se houver.
+   * Necessário porque o WhatsApp pode exigir o JID @lid para entregar a mensagem a
+   * contatos migrados para identificação por LID -sem isso, o envio pode falhar
+   * silenciosamente ou com "No LID for user".
+   */
+  private async buscarLidPorTelefone(userId: number, telefone: string): Promise<string | null> {
+    try {
+      const conversation = await this.conversationModel.findByUserAndContactNormalized(userId, telefone);
+      return conversation?.lid ?? null;
+    } catch (error: any) {
+      logger.debug(`buscarLidPorTelefone: erro ao buscar lid para ${telefone}: ${error.message}`);
+      return null;
+    }
   }
 
   /**
@@ -104,7 +123,8 @@ export class FidelizacaoNotificacaoService {
                 const whatsappService = whatsappManager.getServiceSync(userId);
 
                 if (whatsappService && whatsappService.isReady()) {
-                  await whatsappService.sendMessage(cliente.telefone, mensagem);
+                  const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+                  await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
                   // Atualizar como enviado
                   await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true });
                   resultado.notificacoesEnviadas++;
@@ -167,7 +187,8 @@ export class FidelizacaoNotificacaoService {
                 const whatsappService = whatsappManager.getServiceSync(userId);
 
                 if (whatsappService && whatsappService.isReady()) {
-                  await whatsappService.sendMessage(cliente.telefone, mensagem);
+                  const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+                  await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
                   // Atualizar como enviado
                   await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true });
                   resultado.notificacoesEnviadas++;
@@ -251,7 +272,8 @@ export class FidelizacaoNotificacaoService {
       const whatsappService = whatsappManager.getServiceSync(userId);
 
       if (whatsappService && whatsappService.isReady()) {
-        await whatsappService.sendMessage(cliente.telefone, mensagem);
+        const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+        await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
 
         // Log notification
         await this.notificacaoModel.create({
@@ -340,7 +362,8 @@ export class FidelizacaoNotificacaoService {
 
       try {
         if (whatsappService && whatsappService.isReady()) {
-          await whatsappService.sendMessage(cliente.telefone, mensagem);
+          const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+          await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
           await this.notificacaoModel.update(notif.id, { enviado_whatsapp: true, erro: null });
           logger.info(`[ConquistaFallback] Reenvio conquista OK premio_cliente ${pc.id} (notif ${notif.id})`);
         } else {
@@ -384,7 +407,8 @@ export class FidelizacaoNotificacaoService {
 
     try {
       if (whatsappService && whatsappService.isReady()) {
-        await whatsappService.sendMessage(cliente.telefone, mensagemBase);
+        const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+        await whatsappService.sendMessage(cliente.telefone, mensagemBase, false, false, lid, 'automation');
         await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true, erro: null });
         logger.info(
           `[ConquistaFallback] Conquista fallback enviada premio_cliente ${pc.id} (notif ${notificacao.id})`
@@ -795,7 +819,8 @@ Continue assim! 🚀`;
           const whatsappService = whatsappManager.getServiceSync(userId);
 
           if (whatsappService && whatsappService.isReady()) {
-            await whatsappService.sendMessage(cliente.telefone, mensagem);
+            const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+            await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
             await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true });
             logger.info(`Notificação de progresso enviada para pedido ${pedidoId} (cliente ${cpf})`);
           } else {
@@ -879,7 +904,8 @@ Continue assim! 🚀`;
             const whatsappService = whatsappManager.getServiceSync(userId);
 
             if (whatsappService && whatsappService.isReady()) {
-              await whatsappService.sendMessage(cliente.telefone, mensagem);
+              const lid = await this.buscarLidPorTelefone(userId, cliente.telefone);
+              await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, lid, 'automation');
               await this.notificacaoModel.update(notificacao.id, { enviado_whatsapp: true });
               logger.info(`Notificação de conquista enviada para pedido ${pedidoId} (cliente ${cpf}, prêmio: ${premio.descricao})`);
             } else {

@@ -6,13 +6,13 @@ import mammoth from 'mammoth';
 import logger from '../utils/logger';
 import { DocumentModel } from '../models/document.model';
 import { DocumentChunkModel } from '../models/documentChunk.model';
-import { OllamaService } from './ollama.service';
+import { OpenRouterService } from './openrouter.service';
 import { ChromaDBService } from './chromadb.service';
 
 export class DocumentService {
   private documentModel: DocumentModel;
   private chunkModel: DocumentChunkModel;
-  private ollamaService: OllamaService;
+  private ollamaService: OpenRouterService;
   private chromaService: ChromaDBService;
   private uploadPath: string;
   private chunkSize: number = 1000; // caracteres
@@ -20,7 +20,7 @@ export class DocumentService {
   constructor() {
     this.documentModel = new DocumentModel();
     this.chunkModel = new DocumentChunkModel();
-    this.ollamaService = new OllamaService();
+    this.ollamaService = new OpenRouterService();
     this.chromaService = new ChromaDBService();
     this.uploadPath = path.join(process.cwd(), 'uploads');
     

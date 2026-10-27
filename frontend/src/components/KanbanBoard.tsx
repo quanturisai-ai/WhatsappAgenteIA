@@ -105,12 +105,19 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
     };
   }, [activeSearchTerm]);
 
-  // Filtrar conversas que precisam intervenção
+  // Filtrar conversas que precisam intervenção (sobrepõe qualquer outra classificação)
   const pendingConversations = conversations.filter((c) => c.needsIntervention === true);
-  
-  // Filtrar outras colunas excluindo conversas que precisam intervenção
-  const newConversations = conversations.filter((c) => c.status === 'new' && c.needsIntervention !== true);
-  const inProgressConversations = conversations.filter((c) => c.status === 'in_progress' && c.needsIntervention !== true);
+
+  // Demais colunas excluem conversas que precisam intervenção. "Em Atendimento" foi dividido
+  // em IA/Humano usando o campo `handler`, gravado pelo backend a partir de quem realmente
+  // respondeu por último (ver PLANO_MELHORIA_CLASSIFICACAO_CONVERSAS.md, Fase 4/5).
+  const awaitingResponseConversations = conversations.filter((c) => c.status === 'new' && c.needsIntervention !== true);
+  const aiHandlingConversations = conversations.filter(
+    (c) => c.status === 'in_progress' && c.needsIntervention !== true && c.handler !== 'human'
+  );
+  const humanHandlingConversations = conversations.filter(
+    (c) => c.status === 'in_progress' && c.needsIntervention !== true && c.handler === 'human'
+  );
   const finishedConversations = conversations.filter((c) => c.status === 'finished' && c.needsIntervention !== true);
 
   if (isLoading) {
@@ -193,9 +200,12 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
         )}
       </div>
 
-      <div className="grid gap-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))' }}>
+      {/* 5 colunas fixas dividindo a largura total da tela (em vez de auto-fit, que quebrava a
+          coluna excedente para uma 2ª linha, ou largura fixa por coluna, que exigia scroll
+          horizontal). minmax garante um mínimo legível e só rola se a tela for realmente estreita. */}
+      <div className="grid gap-6 overflow-x-auto pb-4" style={{ gridTemplateColumns: 'repeat(5, minmax(240px, 1fr))' }}>
         {/* Coluna: Pendências */}
-        <div className="bg-gray-50 rounded-lg p-4">
+        <div className="bg-gray-50 rounded-lg p-4 min-w-0 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">
               Pendências
@@ -204,7 +214,7 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
               {pendingConversations.length}
             </span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 overflow-y-auto flex-1" style={{ maxHeight: 'calc(100vh - 260px)' }}>
             {pendingConversations.map((conversation) => (
               <ConversationCard
                 key={conversation.id}
@@ -220,69 +230,95 @@ export const KanbanBoard = ({ onConversationClick, onNewConversation }: KanbanBo
           </div>
         </div>
 
-        {/* Coluna: Nova Interação */}
-        <div className="bg-gray-50 rounded-lg p-4">
+        {/* Coluna: Aguardando Resposta */}
+        <div className="bg-gray-50 rounded-lg p-4 min-w-0 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">
-              Nova Interação
+              Aguardando Resposta
             </h3>
             <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-              {newConversations.length}
+              {awaitingResponseConversations.length}
             </span>
           </div>
-          <div className="space-y-3">
-            {newConversations.map((conversation) => (
+          <div className="space-y-3 overflow-y-auto flex-1" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+            {awaitingResponseConversations.map((conversation) => (
               <ConversationCard
                 key={conversation.id}
                 conversation={conversation}
                 onClick={() => onConversationClick(conversation)}
               />
             ))}
-            {newConversations.length === 0 && (
+            {awaitingResponseConversations.length === 0 && (
               <p className="text-sm text-gray-500 text-center py-8">
-                Nenhuma nova conversa
+                Nenhuma conversa aguardando resposta
               </p>
             )}
           </div>
         </div>
 
-        {/* Coluna: Em Atendimento */}
-        <div className="bg-gray-50 rounded-lg p-4">
+        {/* Coluna: IA Atendendo */}
+        <div className="bg-gray-50 rounded-lg p-4 min-w-0 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">
-              Em Atendimento
+              IA Atendendo
             </h3>
             <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-              {inProgressConversations.length}
+              {aiHandlingConversations.length}
             </span>
           </div>
-          <div className="space-y-3">
-            {inProgressConversations.map((conversation) => (
+          <div className="space-y-3 overflow-y-auto flex-1" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+            {aiHandlingConversations.map((conversation) => (
               <ConversationCard
                 key={conversation.id}
                 conversation={conversation}
                 onClick={() => onConversationClick(conversation)}
               />
             ))}
-            {inProgressConversations.length === 0 && (
+            {aiHandlingConversations.length === 0 && (
               <p className="text-sm text-gray-500 text-center py-8">
-                Nenhuma conversa em atendimento
+                Nenhuma conversa com a IA atendendo
               </p>
             )}
           </div>
         </div>
 
-        {/* Coluna: Finalizado */}
-        <div className="bg-gray-50 rounded-lg p-4">
+        {/* Coluna: Humano Atendendo */}
+        <div className="bg-gray-50 rounded-lg p-4 min-w-0 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">
-              Finalizado
+              Humano Atendendo
+            </h3>
+            <span className="bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+              {humanHandlingConversations.length}
+            </span>
+          </div>
+          <div className="space-y-3 overflow-y-auto flex-1" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+            {humanHandlingConversations.map((conversation) => (
+              <ConversationCard
+                key={conversation.id}
+                conversation={conversation}
+                onClick={() => onConversationClick(conversation)}
+              />
+            ))}
+            {humanHandlingConversations.length === 0 && (
+              <p className="text-sm text-gray-500 text-center py-8">
+                Nenhuma conversa com atendimento humano
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Coluna: Finalizadas */}
+        <div className="bg-gray-50 rounded-lg p-4 min-w-0 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Finalizadas
             </h3>
             <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
               {finishedConversations.length}
             </span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 overflow-y-auto flex-1" style={{ maxHeight: 'calc(100vh - 260px)' }}>
             {finishedConversations.map((conversation) => (
               <ConversationCard
                 key={conversation.id}

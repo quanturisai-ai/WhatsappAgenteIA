@@ -1,9 +1,8 @@
 import axios from 'axios';
-import FormData from 'form-data';
 import logger from '../utils/logger';
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 60000; // OpenRouter pode levar mais que o serviço local
 const RETRY_DELAY_MS = 2000;
 
 export interface TranscriptionResult {
@@ -13,24 +12,45 @@ export interface TranscriptionResult {
   transcription_time: number;
 }
 
+function mimetypeToFormat(mimetype: string): string {
+  if (mimetype.includes('wav')) return 'wav';
+  if (mimetype.includes('mp3') || mimetype.includes('mpeg')) return 'mp3';
+  if (mimetype.includes('mp4')) return 'mp4';
+  if (mimetype.includes('webm')) return 'webm';
+  if (mimetype.includes('flac')) return 'flac';
+  if (mimetype.includes('aac')) return 'aac';
+  return 'ogg'; // padrão para áudios do WhatsApp (ogg/opus)
+}
+
 export class AudioTranscriptionService {
+  private apiKey: string;
   private baseUrl: string;
+  private model: string;
+  private language: string;
   private timeoutMs: number;
   private enabled: boolean;
 
   constructor() {
-    this.baseUrl = (process.env.WHISPER_SERVICE_URL || 'http://localhost:8787').replace(/\/$/, '');
+    this.apiKey = process.env.OPENROUTER_API_KEY || '';
+    this.baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+    this.model = process.env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/whisper-large-v3-turbo';
+    this.language = process.env.WHISPER_LANGUAGE || 'pt';
     this.timeoutMs = parseInt(process.env.AUDIO_TRANSCRIPTION_TIMEOUT_MS || String(DEFAULT_TIMEOUT_MS), 10) || DEFAULT_TIMEOUT_MS;
     this.enabled = process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true';
   }
 
   /**
-   * Transcreve um buffer de áudio (ex.: ogg/opus do WhatsApp) para texto.
+   * Transcreve um buffer de áudio usando OpenRouter STT.
    * Retorna null se transcrição desabilitada, falhar ou timeout.
    */
   async transcribe(buffer: Buffer, mimetype: string): Promise<TranscriptionResult | null> {
     if (!this.enabled) {
-      logger.info('Transcrição de áudio desabilitada (AUDIO_TRANSCRIPTION_ENABLED != true). Configure .env com AUDIO_TRANSCRIPTION_ENABLED=true');
+      logger.info('Transcrição de áudio desabilitada (AUDIO_TRANSCRIPTION_ENABLED != true).');
+      return null;
+    }
+
+    if (!this.apiKey) {
+      logger.warn('OPENROUTER_API_KEY não configurada — transcrição de áudio indisponível.');
       return null;
     }
 
@@ -39,40 +59,66 @@ export class AudioTranscriptionService {
       return null;
     }
 
-    const ext = mimetype.includes('wav') ? '.wav' : mimetype.includes('mp3') || mimetype.includes('mpeg') ? '.mp3' : mimetype.includes('mp4') ? '.mp4' : '.ogg';
-    const form = new FormData();
-    form.append('file', buffer, { filename: `audio${ext}`, contentType: mimetype || 'audio/ogg' });
+    const format = mimetypeToFormat(mimetype);
+    const base64Audio = buffer.toString('base64');
 
-    logger.info('Chamando Whisper em %s/transcribe (tamanho=%d bytes)', this.baseUrl, buffer.length);
+    logger.info(
+      'Transcrevendo áudio via OpenRouter (%s) | formato=%s | tamanho=%d bytes',
+      this.model,
+      format,
+      buffer.length,
+    );
 
     const doRequest = async (): Promise<TranscriptionResult | null> => {
+      const startMs = Date.now();
       try {
-        const { data } = await axios.post<{ text?: string; language?: string; audio_duration?: number; transcription_time?: number }>(
-          `${this.baseUrl}/transcribe`,
-          form,
+        const { data } = await axios.post<{ text?: string; usage?: any }>(
+          `${this.baseUrl}/audio/transcriptions`,
           {
-            headers: form.getHeaders(),
+            model: this.model,
+            input_audio: {
+              data: base64Audio,
+              format,
+            },
+            language: this.language,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://agentezap.local',
+              'X-Title': 'AgenteZap',
+            },
             timeout: this.timeoutMs,
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
-          }
+          },
         );
+
+        const transcriptionTime = (Date.now() - startMs) / 1000;
+
         if (data && typeof data.text === 'string') {
+          logger.info(
+            'Transcrição concluída em %.2fs | %d chars',
+            transcriptionTime,
+            data.text.length,
+          );
           return {
             text: data.text,
-            language: data.language || 'pt',
-            audio_duration: typeof data.audio_duration === 'number' ? data.audio_duration : 0,
-            transcription_time: typeof data.transcription_time === 'number' ? data.transcription_time : 0,
+            language: this.language,
+            audio_duration: data.usage?.seconds ?? 0,
+            transcription_time: transcriptionTime,
           };
         }
-        logger.warn('Whisper retornou resposta sem texto válido: data=%s', JSON.stringify(data).slice(0, 200));
+
+        logger.warn('OpenRouter STT retornou resposta sem texto: %s', JSON.stringify(data).slice(0, 200));
         return null;
       } catch (err: any) {
         if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-          logger.warn('Timeout na transcrição de áudio (URL=%s, timeout=%dms)', this.baseUrl, this.timeoutMs);
+          logger.warn('Timeout na transcrição de áudio OpenRouter (timeout=%dms)', this.timeoutMs);
         } else {
-          const msg = err?.response?.data ? JSON.stringify(err.response.data).slice(0, 150) : (err?.message || err);
-          logger.warn('Erro ao chamar Whisper service (URL=%s): %s', this.baseUrl, msg);
+          const msg = err?.response?.data
+            ? JSON.stringify(err.response.data).slice(0, 200)
+            : err?.message || String(err);
+          logger.warn('Erro ao chamar OpenRouter STT: %s', msg);
         }
         return null;
       }
@@ -80,6 +126,7 @@ export class AudioTranscriptionService {
 
     let result = await doRequest();
     if (result === null) {
+      logger.info('Aguardando %dms antes de nova tentativa...', RETRY_DELAY_MS);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       result = await doRequest();
     }

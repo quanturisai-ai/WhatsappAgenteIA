@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { ChromaDBService } from './chromadb.service';
-import { OllamaService } from './ollama.service';
+import { OpenRouterService } from './openrouter.service';
 import { AgentConfigModel } from '../models/agentConfig.model';
 import { TopicModel } from '../models/topic.model';
 import { DocumentModel } from '../models/document.model';
@@ -22,7 +22,7 @@ export interface IndexableContent {
 
 export class IndexingService {
   private chromaService: ChromaDBService;
-  private ollamaService: OllamaService;
+  private ollamaService: OpenRouterService;
   private agentConfigModel: AgentConfigModel;
   private topicModel: TopicModel;
   private documentModel: DocumentModel;
@@ -31,7 +31,7 @@ export class IndexingService {
 
   constructor() {
     this.chromaService = new ChromaDBService();
-    this.ollamaService = new OllamaService();
+    this.ollamaService = new OpenRouterService();
     this.agentConfigModel = new AgentConfigModel();
     this.topicModel = new TopicModel();
     this.documentModel = new DocumentModel();

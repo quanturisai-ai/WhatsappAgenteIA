@@ -9,9 +9,9 @@ export class AgentConfigModel {
         `SELECT id, user_id, business_name, business_info, services, hours, 
          personality, greeting_message, farewell_message, absence_message, 
          specific_instructions, embedding_model, generation_model,
-         temperature, top_p, top_k, repeat_penalty, max_age_hours,
+         temperature, top_p, top_k, repeat_penalty, max_age_hours, pause_on_human_reply,
          last_indexed_at, indexing_status, content_hash,
-         created_at, updated_at 
+         created_at, updated_at
          FROM agent_config WHERE user_id = ?`,
         [userId]
       ) as any;
@@ -159,6 +159,10 @@ export class AgentConfigModel {
       if (updates.max_age_hours !== undefined) {
         fields.push('max_age_hours = ?');
         values.push(updates.max_age_hours);
+      }
+      if (updates.pause_on_human_reply !== undefined) {
+        fields.push('pause_on_human_reply = ?');
+        values.push(updates.pause_on_human_reply ? 1 : 0);
       }
 
       if (fields.length === 0) {

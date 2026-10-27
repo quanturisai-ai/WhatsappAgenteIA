@@ -62,13 +62,24 @@ export interface Conquista {
   premioId: number;
   premioDescricao: string;
   premioServico: TipoServico;
+  premioValorVoucher: number | null;
+  /** Valor que foi usado para gerar o voucher (grava na emissão; detecta divergência mesmo sem sync) */
+  valorVoucherGerado: number | null;
   dataConquista: string;
   dataValidade: string | null;
   dataUtilizacao: string | null;
   utilizado: boolean;
   codigoVoucher: string | null;
+  /** Código do voucher inativado na última reemissão por reajuste de valor */
+  codigoVoucherAnterior: string | null;
+  /** Quando o voucher foi reemitido por reajuste de valor (ISO string) */
+  voucherAtualizadoEm: string | null;
   observacao: string | null;
   createdAt: string;
+  /** Flag calculado no backend: valor emitido ≠ valor atual do prêmio e condições OK */
+  precisaRegerar: boolean;
+  voucherValorEmitido: number | null;
+  voucherSaldo: number | null;
 }
 
 export interface PedidoDetalhado {
@@ -195,6 +206,19 @@ class FidelizacaoService {
 
   async gerarVoucherConquista(id: number): Promise<{ codigo_voucher: string; data_validade: string }> {
     const response = await api.put(`/fidelizacao/conquistas/${id}/gerar-voucher`);
+    return response.data;
+  }
+
+  async regerarVoucherConquista(id: number): Promise<{
+    message: string;
+    novoCodigo: string;
+    codigoAnterior: string;
+    codigoVoucher: string;
+    codigoVoucherAnterior: string;
+    dataValidade: string | null;
+    voucherAtualizadoEm: string | null;
+  }> {
+    const response = await api.put(`/fidelizacao/conquistas/${id}/regerar-voucher`);
     return response.data;
   }
 

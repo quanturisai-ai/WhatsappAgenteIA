@@ -332,6 +332,11 @@ export async function sincronizarUsuario(userId: number): Promise<void> {
 // Timer único para verificação periódica
 let verificacaoTimer: NodeJS.Timeout | null = null;
 
+// Trava de reentrância: impede que um novo ciclo de automações inicie
+// enquanto o anterior ainda está em execução (evita notificações duplicadas
+// quando o processamento demora mais que o intervalo do timer).
+let automacoesEmExecucao = false;
+
 /**
  * Verifica quais usuários precisam ser sincronizados baseado em ultima_sincronizacao + intervalo.
  * Exportada para permitir chamada pontual (ex: após sync manual).
@@ -402,27 +407,35 @@ export async function verificarESincronizarUsuarios(filtroUserId?: number): Prom
  * Executado em paralelo ao sync, mas com lógica própria de intervalo.
  */
 export async function verificarEProcessarAutomaticoes(): Promise<void> {
+  if (automacoesEmExecucao) {
+    logger.warn('Ciclo anterior de automações ainda em execução, pulando este tick para evitar notificações duplicadas.');
+    return;
+  }
+
+  automacoesEmExecucao = true;
   try {
     const usuarios = await fidelizacaoRegrasConfigModel.findUsuariosParaVerificacao();
     if (usuarios.length === 0) return;
 
     for (const { user_id } of usuarios) {
       try {
-        await fidelizacaoRegrasService.processarRegrasUsuario(user_id);
         await fidelizacaoRegrasConfigModel.atualizarUltimaVerificacao(user_id);
+        await fidelizacaoRegrasService.processarRegrasUsuario(user_id);
       } catch (err: any) {
         logger.error(`Erro ao processar automações para usuário ${user_id}: ${err.message}`);
       }
     }
   } catch (error: any) {
     logger.error(`Erro no loop de verificação de automações: ${error.message}`);
+  } finally {
+    automacoesEmExecucao = false;
   }
 }
 
 /**
  * Inicia o scheduler
  */
-export function startScheduler(intervaloCheckMs: number = 60000) {
+export function startScheduler(intervaloCheckMs: number = 300000) {
   if (verificacaoTimer) {
     logger.warn('Scheduler já está rodando.');
     return;

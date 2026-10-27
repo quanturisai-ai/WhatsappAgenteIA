@@ -13,6 +13,7 @@ import {
   obterPedidosDetalhados,
   registrarEntregaPremio,
   gerarVoucherConquista,
+  regerarVoucherConquista,
   listarNotificacoes,
   getConfigFidelizacao,
   atualizarSimulacao,
@@ -56,6 +57,7 @@ router.get('/conquistas', listarConquistas);
 router.put('/conquistas/:id/utilizar', marcarPremioUtilizado);
 router.put('/conquistas/:id/entrega', registrarEntregaPremio);
 router.put('/conquistas/:id/gerar-voucher', gerarVoucherConquista);
+router.put('/conquistas/:id/regerar-voucher', regerarVoucherConquista);
 
 // Notificações (lista enviadas) e config (simulação)
 router.get('/notificacoes', listarNotificacoes);

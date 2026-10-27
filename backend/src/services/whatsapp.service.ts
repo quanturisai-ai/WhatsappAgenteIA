@@ -9,15 +9,28 @@ import { WhatsAppSessionModel } from '../models/whatsappSession.model';
 import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { ReactionModel } from '../models/reaction.model';
+import { AgentConfigModel } from '../models/agentConfig.model';
 import { WhatsAppRawMessageLogger } from '../utils/whatsappRawMessageLogger';
 import { emitConversationUpdated, emitConversationNew } from '../utils/conversationSocketEmitter';
 // WhatsAppSession type is used in model, not directly imported
 import { ConversationService } from './conversation.service';
+import { MessageSource } from '../types';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
 import { setupPuppeteerCache, detectChrome } from '../utils/puppeteer.util';
 setupPuppeteerCache();
 const chromeExecFound = detectChrome();
+
+// 📌 Versão do WhatsApp Web fixada (ver uso em `new Client(...)` abaixo).
+// Motivo: builds novas do WhatsApp Web (a partir de ~2026-09-07 à tarde) quebraram a
+// injeção do Store no whatsapp-web.js 1.34.x — o evento 'authenticated' disparava mas
+// 'ready'/client.info nunca chegavam, deixando a sessão presa em 'connecting'.
+// '2.3000.1046929377' é a última build em que o evento 'ready' disparou normalmente
+// nesta instalação (2026-09-07 02:00). Snapshot: backend/.wwebjs_cache/<versão>.html
+// Para acompanhar novas versões: baixar o HTML novo, validar e atualizar aqui (ou a env var).
+const WWEB_VERSION_PIN = process.env.WWEB_VERSION_PIN || '2.3000.1046929377';
+// Diretório dos snapshots HTML usados pelo LocalWebCache do whatsapp-web.js.
+const WWEB_CACHE_PATH = process.env.WWEB_CACHE_PATH || path.resolve(process.cwd(), '.wwebjs_cache');
 
 export class WhatsAppService extends EventEmitter {
   private client: Client | null = null;
@@ -27,12 +40,18 @@ export class WhatsAppService extends EventEmitter {
   private messageModel: MessageModel;
   private reactionModel: ReactionModel;
   private conversationService: ConversationService;
+  private agentConfigModel: AgentConfigModel;
   private isInitialized: boolean = false;
   private isClientReady: boolean = false; // Flag para indicar se o cliente está realmente pronto
   private lastQRCode: string | null = null; // Guardar QR code em memória para acesso imediato
   private qrCodeTimeout: NodeJS.Timeout | null = null; // Timeout para limpar QR code expirado
   // Map para rastrear mensagens enviadas pela IA: message_id -> isFromAI
   private pendingAIMessages: Map<string, boolean> = new Map();
+  // Map para rastrear a origem explícita de mensagens outgoing enviadas via sendMessage/sendMedia
+  // (source 'ai' ou 'automation' — 'human' não precisa de rastreamento, é o fallback padrão em
+  // handleOutgoingMessage). Roda em paralelo a pendingAIMessages, com as mesmas chaves
+  // (message_id + hashes de conteúdo/caption), sem alterar o comportamento de is_from_ai.
+  private pendingSources: Map<string, MessageSource> = new Map();
   // Map para rastrear media_id de mensagens de mídia: message_id -> media_id
   private pendingMediaIds: Map<string, number> = new Map();
   // Interval para keep-alive -manter sessão ativa
@@ -50,6 +69,15 @@ export class WhatsAppService extends EventEmitter {
   private keepAliveErrorCount: number = 0;
   // 4 tentativas x 15 min = 1 hora antes de marcar como connection_failed
   private readonly MAX_KEEPALIVE_ERRORS = 4;
+  // Self-heal: reparo automático quando o frame do Puppeteer morre (ex: "detached Frame")
+  private healPromise: Promise<void> | null = null;
+  private lastSelfHealAt: number = 0;
+  private readonly SELF_HEAL_COOLDOWN_MS = 30000; // 30s entre reparos
+  // Recuperação quando 'authenticated' vem mas 'ready'/client.info nunca chegam
+  // (build do WhatsApp Web incompatível com o whatsapp-web.js). Sem isto o serviço
+  // ficava preso em 'connecting' para sempre — keep-alive/selfHeal só rodam após 'ready'.
+  private connReadyHealAttempts: number = 0;
+  private readonly MAX_CONN_READY_HEAL = 2;
 
   constructor(userId: number) {
     super();
@@ -59,6 +87,7 @@ export class WhatsAppService extends EventEmitter {
     this.messageModel = new MessageModel();
     this.reactionModel = new ReactionModel();
     this.conversationService = new ConversationService();
+    this.agentConfigModel = new AgentConfigModel();
   }
 
   /**
@@ -712,6 +741,17 @@ export class WhatsAppService extends EventEmitter {
           dataPath: userSessionPath,
         }),
         puppeteer: puppeteerConfig,
+        // 📌 WhatsApp Web congelado numa build comprovadamente estável nesta instalação.
+        // Builds novas do WhatsApp Web quebraram a injeção do Store no whatsapp-web.js 1.34.x:
+        // 'authenticated' disparava mas 'ready'/client.info nunca (sessão presa em 'connecting').
+        // Snapshot local: <WWEB_CACHE_PATH>/<WWEB_VERSION_PIN>.html
+        // strict:false => se o snapshot sumir, o wwebjs cai para a versão live automaticamente.
+        webVersion: WWEB_VERSION_PIN,
+        webVersionCache: {
+          type: 'local',
+          path: WWEB_CACHE_PATH,
+          strict: false,
+        },
         // ✅ CRÍTICO: Configurações para prevenir múltiplas conexões e LOGOUT
         // takeoverOnConflict: false previne assumir outras conexões
         // restartOnAuthFail: false previne loops de reconexão
@@ -897,6 +937,7 @@ export class WhatsAppService extends EventEmitter {
         // Marcar como pronto
         this.isClientReady = true;
         this.authenticatedProcessing = false;
+        this.connReadyHealAttempts = 0;
 
         // Atualizar banco de dados
         await this.sessionModel.updateByUserId(this.userId, {
@@ -905,12 +946,10 @@ export class WhatsAppService extends EventEmitter {
           qr_code: undefined,
         });
 
-        // Emitir evento para Socket.IO
-        this.io.to(`user_${this.userId}`).emit('whatsapp_status', {
-          status: 'connected',
-          authenticated: true,
-          message: 'WhatsApp conectado com sucesso!',
-        });
+        // Notificar listeners (index.ts -> Socket.IO). Antes usava this.io, que nunca é
+        // atribuído nesta classe e lançava TypeError exatamente aqui, no único caminho
+        // de conclusão que não passa pelo evento 'ready'.
+        this.emit('ready');
 
         // Iniciar keep-alive
         this.startKeepAlive();
@@ -931,6 +970,31 @@ export class WhatsAppService extends EventEmitter {
           // Não lançar erro -deixar o evento 'ready' como fallback
           this.authenticatedProcessing = false;
         }
+      }
+    }
+
+    // Se chegou aqui sem ficar pronto, o evento 'ready' não veio e client.info nunca
+    // populou. Sintoma clássico de build do WhatsApp Web incompatível com a versão do
+    // whatsapp-web.js (ver WWEB_VERSION_PIN). Sem esta recuperação o serviço ficava
+    // preso em 'connecting' indefinidamente: keep-alive e selfHeal só rodam após 'ready'.
+    if (!this.isClientReady) {
+      logger.error(`[Conexão Robusta] Cliente NÃO ficou pronto após ${delays.length} tentativas para usuário ${this.userId} (authenticated OK, ready/client.info nunca chegaram).`);
+
+      try {
+        await this.sessionModel.updateByUserId(this.userId, { status: 'connection_failed' });
+      } catch (dbErr: any) {
+        logger.warn(`[Conexão Robusta] Erro ao marcar 'connection_failed': ${dbErr.message}`);
+      }
+      this.emit('connection_failed', 'READY_TIMEOUT');
+
+      if (this.connReadyHealAttempts < this.MAX_CONN_READY_HEAL) {
+        this.connReadyHealAttempts++;
+        logger.warn(`[Conexão Robusta] Disparando selfHeal (${this.connReadyHealAttempts}/${this.MAX_CONN_READY_HEAL}) para recarregar o WhatsApp Web...`);
+        this.selfHeal(`ready/client.info nunca disponíveis após 'authenticated' (${delays.length} tentativas)`)
+          .catch(err => logger.error(`[Conexão Robusta] selfHeal falhou: ${err.message}`));
+      } else {
+        logger.error(`[Conexão Robusta] Limite de ${this.MAX_CONN_READY_HEAL} reparos atingido para usuário ${this.userId}. Provável incompatibilidade de versão: revisar whatsapp-web.js / WWEB_VERSION_PIN. Aguardando ação manual.`);
+        this.connReadyHealAttempts = 0;
       }
     }
   }
@@ -1293,6 +1357,7 @@ export class WhatsAppService extends EventEmitter {
 
         // Marcar cliente como pronto APÓS a sincronização
         this.isClientReady = true;
+        this.connReadyHealAttempts = 0;
         logger.info(`✅ isClientReady definido como TRUE para usuário ${this.userId}`);
 
         try {
@@ -1968,37 +2033,55 @@ export class WhatsAppService extends EventEmitter {
     if (rawIdentifier.includes('@lid')) {
       logger.debug(`[LID Detection] Identificador @lid detectado: ${lid}. Tentando recuperar número real...`);
 
+      let numeroRecuperado: string | null = null;
+
+      // 3.1 Método preferencial: perguntar direto ao WhatsApp o mapeamento LID<->telefone
+      // (autoritativo -funciona mesmo quando o contato já está salvo com um nome na
+      // agenda do celular conectado, caso em que a extração de dígitos do nome falha)
       try {
-        // Tentar via getChatById (mais estável que getContactById atualmente)
-        const chat = await this.client!.getChatById(rawIdentifier);
-
-        if (chat && chat.name) {
-          // Extrair apenas números do nome do chat
-          const digitsInName = chat.name.replace(/\D/g, '');
-
-          // Se tiver 10 ou mais dígitos, é muito provável que seja o número real
-          if (digitsInName.length >= 10) {
-            logger.info(`[LID Recovery] SUCESSO! Número real encontrado no nome do chat: ${digitsInName}`);
-            contactNumber = digitsInName;
-
-            // Se o nome original do chat tiver letras, é um nome real, senão usamos o número
-            if (/[a-zA-Z]/.test(chat.name)) {
-              contactName = chat.name;
-            } else {
-              contactName = digitsInName;
-            }
-          } else {
-            logger.debug(`[LID Recovery] Nome do chat não parece conter um número: ${chat.name}`);
-            // Se não encontrou número, contactNumber já é o ID do LID sem sufixo (fallback)
-            // contactNumber já está limpo acima
-            if (chat.name && !chat.name.includes('@')) {
-              contactName = chat.name;
-            }
+        const [resolved] = await (this.client as any).getContactLidAndPhone([rawIdentifier]) as Array<{ lid?: string; pn?: string }>;
+        const phoneWid = resolved?.pn;
+        if (phoneWid) {
+          const digits = phoneWid.replace('@c.us', '').replace('@s.whatsapp.net', '');
+          if (/^\d{8,}$/.test(digits)) {
+            numeroRecuperado = digits;
+            logger.info(`[LID Recovery] SUCESSO via getContactLidAndPhone: ${digits}`);
           }
+        } else {
+          logger.debug(`[LID Recovery] getContactLidAndPhone não retornou telefone para ${rawIdentifier}`);
         }
       } catch (error: any) {
+        logger.warn(`[LID Recovery] Erro ao chamar getContactLidAndPhone: ${error.message}`);
+      }
+
+      // 3.2 Buscar o chat só para o nome de exibição (e como fallback do número,
+      // caso o método preferencial não tenha retornado nada)
+      let chat: any = null;
+      try {
+        chat = await this.client!.getChatById(rawIdentifier);
+      } catch (error: any) {
         logger.warn(`[LID Recovery] Erro ao tentar recuperar via chat: ${error.message}`);
-        // contactNumber já é o ID do LID sem sufixo (fallback)
+      }
+
+      if (!numeroRecuperado && chat?.name) {
+        const digitsInName = chat.name.replace(/\D/g, '');
+        if (digitsInName.length >= 10) {
+          logger.info(`[LID Recovery] SUCESSO via nome do chat (fallback): ${digitsInName}`);
+          numeroRecuperado = digitsInName;
+        } else {
+          logger.debug(`[LID Recovery] Nome do chat não parece conter um número: ${chat.name}`);
+        }
+      }
+
+      if (numeroRecuperado) {
+        contactNumber = numeroRecuperado;
+      }
+
+      // Nome do contato: usar o nome do chat quando disponível e não for só o próprio JID
+      if (chat?.name && !chat.name.includes('@')) {
+        contactName = chat.name;
+      } else if (numeroRecuperado) {
+        contactName = numeroRecuperado;
       }
     }
 
@@ -2270,15 +2353,24 @@ export class WhatsAppService extends EventEmitter {
           status: 'new',
           last_message_at: new Date(),
         });
+        await this.conversationModel.update(conversation.id, {
+          last_client_message_at: new Date(),
+        });
       } else {
         // Atualizar última mensagem e LID se estiver faltando
         const updates: any = {
           last_message_at: new Date(),
+          // last_client_message_at é a base do job de auto-finalização por inatividade:
+          // diferente de last_message_at, só avança quando o CLIENTE fala, nunca por
+          // disparos automáticos de fidelização/campanha (ver Fase 1/4 do plano).
+          last_client_message_at: new Date(),
         };
 
         // Conversa finalizada que recebe nova mensagem: reclassificar como nova interação (status 'new')
+        // e devolver a "bola" para ninguém — a próxima resposta (IA ou humano) é que assume.
         if (conversation.status === 'finished') {
           updates.status = 'new';
+          updates.handler = 'none';
         }
 
         // Se a conversa não tem LID e recebemos um, atualizar
@@ -2311,6 +2403,7 @@ export class WhatsAppService extends EventEmitter {
           media_id: incomingMediaId || undefined,
           direction: 'incoming',
           is_from_ai: false,
+          source: 'client',
         });
         logger.info(`Mensagem salva no banco: ID=${savedMessage.id}, conversation_id=${conversation.id}, tipo=${messageType}, media_id=${incomingMediaId}, content="${bodyPreview}"`);
       } catch (error: any) {
@@ -2523,6 +2616,19 @@ export class WhatsAppService extends EventEmitter {
           }
         }
 
+        // Mesma race condition, mas para source (ai/automation): message_create disparado
+        // antes do sendMessage/sendMedia retornar, então a mensagem já existe sem source.
+        if (!existingMessage.source && this.pendingSources.has(msg.id._serialized)) {
+          try {
+            const trackedSource = this.pendingSources.get(msg.id._serialized)!;
+            await this.messageModel.update(existingMessage.id, { source: trackedSource });
+            logger.debug(`Mensagem atualizada com source=${trackedSource}: message_id=${msg.id._serialized}`);
+            this.pendingSources.delete(msg.id._serialized);
+          } catch (error: any) {
+            logger.error(`Erro ao atualizar source da mensagem: ${error.message}`);
+          }
+        }
+
         // CORREÇÃO ESPECÍFICA PARA IA: Se a mensagem é da IA, é mídia e não tem media_id, tentar buscar e atualizar
         // Isso resolve race condition onde message_create é disparado antes do sendMedia retornar
         if (msg.hasMedia && !existingMessage.media_id) {
@@ -2622,6 +2728,38 @@ export class WhatsAppService extends EventEmitter {
 
       logger.debug(`Verificando se mensagem é da IA: message_id=${msg.id._serialized}, isFromAI=${isFromAI}`);
 
+      // Resolver o source explícito da mensagem (ai/automation rastreados via pendingSources).
+      // Independente do bloco de isFromAI acima: automação nunca passa por pendingAIMessages,
+      // então precisa da própria cadeia message_id -> contentHash -> captionHash.
+      let resolvedSource: MessageSource | undefined = this.pendingSources.get(msg.id._serialized);
+
+      if (!resolvedSource && msg.body) {
+        const contentHash = `${msg.body.substring(0, 100)}_${msg.body.length}`;
+        resolvedSource = this.pendingSources.get(contentHash);
+        if (resolvedSource) {
+          this.pendingSources.delete(contentHash);
+          this.pendingSources.set(msg.id._serialized, resolvedSource);
+        }
+      }
+
+      if (!resolvedSource && msg.hasMedia) {
+        const msgData = (msg as any)._data || {};
+        const caption = msgData.caption || msg.body || '';
+        if (caption) {
+          const captionHash = `${caption.substring(0, 100)}_${caption.length}`;
+          resolvedSource = this.pendingSources.get(captionHash);
+          if (resolvedSource) {
+            this.pendingSources.delete(captionHash);
+            this.pendingSources.set(msg.id._serialized, resolvedSource);
+          }
+        }
+      }
+
+      // Fallback: sem rastreamento explícito, é humano (atendente digitando direto no
+      // WhatsApp/celular) — a menos que isFromAI já tenha identificado como IA pelo caminho legado.
+      const source: MessageSource = resolvedSource ?? (isFromAI ? 'ai' : 'human');
+      logger.debug(`Source resolvido para mensagem enviada: message_id=${msg.id._serialized}, source=${source}`);
+
       // Detectar tipo de mensagem para mensagens enviadas
       const messageType = this.detectMessageType(msg);
 
@@ -2686,25 +2824,83 @@ export class WhatsAppService extends EventEmitter {
           media_id: mediaId,
           direction: 'outgoing',
           is_from_ai: isFromAI,
+          source,
         });
 
         // Remover do Map após salvar
         if (isFromAI) {
           this.pendingAIMessages.delete(msg.id._serialized);
         }
+        if (resolvedSource) {
+          this.pendingSources.delete(msg.id._serialized);
+        }
         if (mediaId) {
           this.pendingMediaIds.delete(msg.id._serialized);
         }
 
-        logger.info(`Mensagem enviada salva no banco: ID=${savedMessage.id}, conversation_id=${conversation.id}, is_from_ai=${isFromAI}`);
+        logger.info(`Mensagem enviada salva no banco: ID=${savedMessage.id}, conversation_id=${conversation.id}, is_from_ai=${isFromAI}, source=${source}`);
       } catch (error: any) {
         logger.error(`Erro ao salvar mensagem enviada no banco: ${error.message}`);
       }
 
-      // Atualizar última mensagem
-      await this.conversationModel.update(conversation.id, {
+      // Atualizar última mensagem e, conforme o source resolvido, quem está atendendo agora
+      const conversationUpdates: any = {
         last_message_at: new Date(),
-      });
+      };
+
+      if (source === 'human') {
+        // Humano respondeu — pelo dashboard ou direto no celular/WhatsApp Web, não dá para
+        // distinguir aqui (ambos caem no mesmo fallback de source), e não precisa: nos dois
+        // casos um humano está de fato atendendo. Pausar a IA evita resposta duplicada, mas
+        // é comportamento novo e visível, então fica atrás de agent_config.pause_on_human_reply
+        // (default ligado).
+        conversationUpdates.handler = 'human';
+        conversationUpdates.status = 'in_progress';
+        try {
+          const agentConfig = await this.agentConfigModel.findByUserId(this.userId);
+          const pauseOnHumanReply = agentConfig?.pause_on_human_reply === undefined
+            || agentConfig?.pause_on_human_reply === null
+            || agentConfig.pause_on_human_reply === true
+            || agentConfig.pause_on_human_reply === 1;
+          if (pauseOnHumanReply) {
+            conversationUpdates.auto_responding = false;
+          }
+        } catch (error: any) {
+          logger.error(`Erro ao verificar pause_on_human_reply para usuário ${this.userId}: ${error.message}`);
+        }
+      } else if (source === 'ai') {
+        conversationUpdates.handler = 'ai';
+      }
+      // source === 'automation' não muda handler: automação não "assume" o atendimento.
+
+      // Se a mensagem que acabamos de salvar é a ÚNICA da conversa, ninguém iniciou uma
+      // interação orgânica ainda — corrige a origem retroativamente:
+      //  - automação (fidelização/campanha): não é "Aguardando resposta", é uma campanha
+      //    que ainda não teve retorno do cliente -> finalizada, origem campaign.
+      //  - IA (contato proativo) ou humano (mensagem manual para contato novo): a empresa
+      //    que iniciou o contato -> origem outbound. Proativo de IA fica aguardando o
+      //    cliente responder (finished); humano que iniciou manualmente já está atendendo.
+      if (source === 'automation' || source === 'ai' || source === 'human') {
+        try {
+          const totalMessages = await this.messageModel.countByConversation(conversation.id);
+          if (totalMessages <= 1) {
+            if (source === 'automation') {
+              conversationUpdates.status = 'finished';
+              conversationUpdates.origin = 'campaign';
+            } else {
+              conversationUpdates.origin = 'outbound';
+              if (source === 'ai') {
+                conversationUpdates.status = 'finished';
+              }
+            }
+            logger.info(`Conversa ${conversation.id} classificada por primeira mensagem: source=${source}`);
+          }
+        } catch (error: any) {
+          logger.error(`Erro ao classificar origem da conversa ${conversation.id}: ${error.message}`);
+        }
+      }
+
+      await this.conversationModel.update(conversation.id, conversationUpdates);
 
       // Buscar dados de mídia se for mensagem de mídia
       let mediaData = null;
@@ -2772,7 +2968,14 @@ export class WhatsAppService extends EventEmitter {
     }
   }
 
-  async sendMessage(contactNumber: string, content: string, isFromAI: boolean = false): Promise<Message> {
+  async sendMessage(
+    contactNumber: string,
+    content: string,
+    isFromAI: boolean = false,
+    _isRetryAfterHeal: boolean = false,
+    lid?: string | null,
+    source: MessageSource = isFromAI ? 'ai' : 'human'
+  ): Promise<Message> {
     if (!this.client) {
       logger.error('Tentativa de enviar mensagem falhou: cliente não existe.');
       throw new Error('WhatsApp cliente não está inicializado');
@@ -2789,78 +2992,117 @@ export class WhatsAppService extends EventEmitter {
           this.isClientReady = true;
           this.isInitialized = true;
           // Emitir ready tardio se necessário
-          // this.emit('ready'); 
+          // this.emit('ready');
         } else {
           logger.error(`Cliente não está conectado (Estado: ${state}). Não é possível enviar.`);
           throw new Error(`WhatsApp não está pronto (Estado: ${state})`);
         }
       } catch (error: any) {
         logger.error(`Erro ao verificar estado do cliente: ${error.message}`);
-        // Se falhar ao verificar estado, assumir que não está pronto, mas tentar enviar se for erro de timeout? 
-        // Não, melhor falhar.
+
+        // Frame morto: getState() também falhou. Reparar e tentar de novo, uma única vez.
+        if (!_isRetryAfterHeal && this.isFatalPuppeteerError(error)) {
+          try {
+            await this.selfHeal(error.message);
+            return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source);
+          } catch (healError: any) {
+            logger.error(`[SelfHeal] Reparo falhou ao verificar estado para ${contactNumber}: ${healError.message}`);
+            throw new Error('WhatsApp cliente não está pronto e verificação de estado falhou');
+          }
+        }
+
         throw new Error('WhatsApp cliente não está pronto e verificação de estado falhou');
       }
     }
 
     try {
-      // Se a mensagem foi enviada pela IA, criar um hash temporário do conteúdo para rastrear
-      // Isso permite identificar a mensagem mesmo se o message_create for disparado antes do sendMessage retornar
+      // Se a mensagem foi enviada pela IA ou é um disparo de automação, criar um hash temporário
+      // do conteúdo para rastrear a origem — permite identificar a mensagem mesmo se o
+      // message_create for disparado antes do sendMessage retornar. 'human' não precisa de
+      // rastreamento: é o fallback padrão assumido em handleOutgoingMessage.
       let contentHash: string | null = null;
-      if (isFromAI && content) {
+      if ((isFromAI || source !== 'human') && content) {
         // Criar hash simples do conteúdo para rastrear (primeiros 100 caracteres + tamanho)
         contentHash = `${content.substring(0, 100)}_${content.length}`;
-        this.pendingAIMessages.set(contentHash, true);
-        logger.debug(`Mensagem da IA rastreada por conteúdo: ${contentHash.substring(0, 50)}...`);
-      }
-
-      // Sanitize phone number
-      let chatId = contactNumber.replace(/\D/g, ''); // Remove non-digits
-
-      // Check if it's a Brazilian number without country code (10 or 11 digits)
-      if (chatId.length === 10 || chatId.length === 11) {
-        chatId = '55' + chatId;
-      }
-
-      if (!chatId.includes('@')) {
-        chatId = `${chatId}@c.us`;
-      }
-
-      // Verify number logic: Check if number exists on WhatsApp and get correct ID
-      try {
-        const numberId = await this.client.getNumberId(chatId);
-        if (numberId) {
-          chatId = numberId._serialized;
-          logger.debug(`Número verificado no WhatsApp: ${chatId}`);
-        } else {
-          logger.warn(`Número não encontrado no WhatsApp (getNumberId retornou null): ${chatId}. Tentando enviar mesmo assim...`);
+        if (isFromAI) {
+          this.pendingAIMessages.set(contentHash, true);
         }
-      } catch (err: any) {
-        logger.warn(`Erro ao verificar número (getNumberId): ${err.message}. Usando formato padrão: ${chatId}`);
+        this.pendingSources.set(contentHash, source);
+        logger.debug(`Mensagem rastreada por conteúdo (source=${source}): ${contentHash.substring(0, 50)}...`);
       }
 
-      logger.debug(`Enviando mensagem para: ${chatId} (original: ${contactNumber})`);
+      let chatId: string;
+
+      if (lid) {
+        // Contato só conhecido por LID (WhatsApp não expôs o telefone real, ex: "153897435922663").
+        // contactNumber nesse caso é só o ID numérico do LID, NÃO um telefone -construir um
+        // "@c.us" a partir dele gera um JID inexistente e o WhatsApp Web recusa o envio com
+        // "No LID for user". É preciso enviar direto para o JID @lid real, sem getNumberId
+        // (que só resolve números de telefone).
+        chatId = lid.includes('@') ? lid : `${lid}@lid`;
+        logger.debug(`Enviando mensagem para contato LID-only: ${chatId} (original: ${contactNumber})`);
+      } else {
+        // Sanitize phone number
+        chatId = contactNumber.replace(/\D/g, ''); // Remove non-digits
+
+        // Check if it's a Brazilian number without country code (10 or 11 digits)
+        if (chatId.length === 10 || chatId.length === 11) {
+          chatId = '55' + chatId;
+        }
+
+        if (!chatId.includes('@')) {
+          chatId = `${chatId}@c.us`;
+        }
+
+        // Verify number logic: Check if number exists on WhatsApp and get correct ID
+        try {
+          const numberId = await this.client.getNumberId(chatId);
+          if (numberId) {
+            chatId = numberId._serialized;
+            logger.debug(`Número verificado no WhatsApp: ${chatId}`);
+          } else {
+            logger.warn(`Número não encontrado no WhatsApp (getNumberId retornou null): ${chatId}. Tentando enviar mesmo assim...`);
+          }
+        } catch (err: any) {
+          logger.warn(`Erro ao verificar número (getNumberId): ${err.message}. Usando formato padrão: ${chatId}`);
+        }
+
+        logger.debug(`Enviando mensagem para: ${chatId} (original: ${contactNumber})`);
+      }
 
       const message = await this.client.sendMessage(chatId, content, { sendSeen: false });
 
-      // Se a mensagem foi enviada pela IA, atualizar o Map com o message_id real
-      if (isFromAI && message.id) {
+      if (!message) {
+        logger.warn(`sendMessage: client.sendMessage() retornou vazio para ${contactNumber} (chatId=${chatId}). A entrega pode ter ocorrido, mas não há objeto de mensagem para rastrear.`);
+      }
+
+      // Se a mensagem foi rastreada (IA ou automação), atualizar o Map com o message_id real
+      if ((isFromAI || source !== 'human') && message?.id) {
         // Remover hash temporário se existir
         if (contentHash) {
-          this.pendingAIMessages.delete(contentHash);
+          if (isFromAI) {
+            this.pendingAIMessages.delete(contentHash);
+          }
+          this.pendingSources.delete(contentHash);
         }
 
         // Adicionar com message_id real
-        this.pendingAIMessages.set(message.id._serialized, true);
-        logger.debug(`Mensagem da IA rastreada: message_id=${message.id._serialized}`);
+        if (isFromAI) {
+          this.pendingAIMessages.set(message.id._serialized, true);
+        }
+        this.pendingSources.set(message.id._serialized, source);
+        logger.debug(`Mensagem rastreada: message_id=${message.id._serialized}, source=${source}`);
 
         // Limpar após 60 segundos para evitar memory leak (aumentado para dar mais tempo)
         setTimeout(() => {
           this.pendingAIMessages.delete(message.id._serialized);
+          this.pendingSources.delete(message.id._serialized);
         }, 60000);
       } else if (contentHash) {
         // Se não conseguiu obter message_id, manter o hash temporário por mais tempo
         setTimeout(() => {
           this.pendingAIMessages.delete(contentHash!);
+          this.pendingSources.delete(contentHash!);
         }, 60000);
       }
 
@@ -2868,11 +3110,24 @@ export class WhatsAppService extends EventEmitter {
       return message;
     } catch (error: any) {
       // Limpar hash temporário em caso de erro
-      if (isFromAI && content) {
+      if ((isFromAI || source !== 'human') && content) {
         const contentHash = `${content.substring(0, 100)}_${content.length}`;
         this.pendingAIMessages.delete(contentHash);
+        this.pendingSources.delete(contentHash);
       }
       logger.error(`Erro ao enviar mensagem: ${error.message}`);
+
+      // Frame morto: reparar e reenviar esta mesma mensagem uma única vez antes de desistir
+      if (!_isRetryAfterHeal && this.isFatalPuppeteerError(error)) {
+        try {
+          await this.selfHeal(error.message);
+          return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source);
+        } catch (healError: any) {
+          logger.error(`[SelfHeal] Reparo ou reenvio falharam para ${contactNumber}: ${healError.message}`);
+          throw healError;
+        }
+      }
+
       throw error;
     }
   }
@@ -2880,7 +3135,16 @@ export class WhatsAppService extends EventEmitter {
   /**
    * Enviar mídia via WhatsApp com suporte a retry em caso de falha de avaliação do Puppeteer
    */
-  async sendMedia(contactNumber: string, filePath: string, caption?: string, isFromAI: boolean = false, mediaId?: number, retryCount: number = 0): Promise<Message> {
+  async sendMedia(
+    contactNumber: string,
+    filePath: string,
+    caption?: string,
+    isFromAI: boolean = false,
+    mediaId?: number,
+    retryCount: number = 0,
+    lid?: string | null,
+    source: MessageSource = isFromAI ? 'ai' : 'human'
+  ): Promise<Message> {
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 2000; // 2 segundos
 
@@ -2899,15 +3163,21 @@ export class WhatsAppService extends EventEmitter {
         throw new Error(`Arquivo de mídia não encontrado: ${filePath}`);
       }
 
-      const chatId = `${contactNumber}@c.us`;
+      // Contato só conhecido por LID: enviar direto ao JID @lid real (ver sendMessage() para
+      // a explicação completa de por que "@c.us" fabricado a partir do LID falha com "No LID for user").
+      const chatId = lid ? (lid.includes('@') ? lid : `${lid}@lid`) : `${contactNumber}@c.us`;
 
-      // Se a mídia foi enviada pela IA, criar um hash temporário do caption para rastrear
-      // Isso permite identificar a mensagem mesmo se o message_create for disparado antes do sendMedia retornar
-      if (isFromAI && caption) {
+      // Se a mídia foi enviada pela IA ou é um disparo de automação, criar um hash temporário
+      // do caption para rastrear a origem — mesma lógica de sendMessage(). 'human' fica de fora:
+      // é o fallback padrão assumido em handleOutgoingMessage.
+      if ((isFromAI || source !== 'human') && caption) {
         // Criar hash simples do caption para rastrear (primeiros 100 caracteres + tamanho)
         captionHash = `${caption.substring(0, 100)}_${caption.length}`;
-        this.pendingAIMessages.set(captionHash, true);
-        logger.debug(`Mídia da IA rastreada por caption: ${captionHash.substring(0, 50)}...`);
+        if (isFromAI) {
+          this.pendingAIMessages.set(captionHash, true);
+        }
+        this.pendingSources.set(captionHash, source);
+        logger.debug(`Mídia rastreada por caption (source=${source}): ${captionHash.substring(0, 50)}...`);
       }
 
       // CORREÇÃO: Adicionar media_id ao pendingMediaIds ANTES de enviar (para mídias manuais)
@@ -2930,15 +3200,21 @@ export class WhatsAppService extends EventEmitter {
       // Enviar mídia com caption opcional
       const message = await this.client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false });
 
-      // Se a mídia foi enviada pela IA, atualizar o Map com o message_id real
-      if (isFromAI && message.id) {
+      // Se a mídia foi rastreada (IA ou automação), atualizar o Map com o message_id real
+      if ((isFromAI || source !== 'human') && message.id) {
         // Remover hash temporário se existir
         if (captionHash) {
-          this.pendingAIMessages.delete(captionHash);
+          if (isFromAI) {
+            this.pendingAIMessages.delete(captionHash);
+          }
+          this.pendingSources.delete(captionHash);
         }
 
         // Adicionar com message_id real
-        this.pendingAIMessages.set(message.id._serialized, true);
+        if (isFromAI) {
+          this.pendingAIMessages.set(message.id._serialized, true);
+        }
+        this.pendingSources.set(message.id._serialized, source);
 
         // Armazenar media_id se fornecido
         if (mediaId !== undefined) {
@@ -2949,11 +3225,12 @@ export class WhatsAppService extends EventEmitter {
           }
         }
 
-        logger.debug(`Mídia da IA rastreada: message_id=${message.id._serialized}${mediaId !== undefined ? `, media_id=${mediaId}` : ''}`);
+        logger.debug(`Mídia rastreada: message_id=${message.id._serialized}, source=${source}${mediaId !== undefined ? `, media_id=${mediaId}` : ''}`);
 
         // Limpar após 60 segundos
         setTimeout(() => {
           this.pendingAIMessages.delete(message.id._serialized);
+          this.pendingSources.delete(message.id._serialized);
           this.pendingMediaIds.delete(message.id._serialized);
         }, 60000);
       } else if (captionHash) {
@@ -2963,6 +3240,7 @@ export class WhatsAppService extends EventEmitter {
         }
         setTimeout(() => {
           this.pendingAIMessages.delete(captionHash!);
+          this.pendingSources.delete(captionHash!);
           this.pendingMediaIds.delete(captionHash!);
         }, 60000);
       }
@@ -2993,13 +3271,16 @@ export class WhatsAppService extends EventEmitter {
       logger.info(`Mídia enviada para ${contactNumber}${isFromAI ? ' (IA)' : ''}: ${filePath}`);
       return message;
     } catch (error: any) {
-      // Se for erro de "Evaluation failed" e ainda temos retries
-      if (error.message?.includes('Evaluation failed') && retryCount < MAX_RETRIES) {
-        logger.warn(`Tentativa ${retryCount + 1}/${MAX_RETRIES} falhou ao enviar mídia para ${contactNumber} (erro: ${error.message}). Aguardando ${RETRY_DELAY}ms antes de tentar novamente...`);
+      const isFatal = this.isFatalPuppeteerError(error);
+
+      // Se for erro de "Evaluation failed", ou frame morto, e ainda temos retries
+      if ((error.message?.includes('Evaluation failed') || isFatal) && retryCount < MAX_RETRIES) {
+        logger.warn(`Tentativa ${retryCount + 1}/${MAX_RETRIES} falhou ao enviar mídia para ${contactNumber} (erro: ${error.message}).`);
 
         // Limpar hashes temporários antes de tentar novamente para evitar duplicidade ou memory leak
-        if (isFromAI && captionHash) {
+        if ((isFromAI || source !== 'human') && captionHash) {
           this.pendingAIMessages.delete(captionHash);
+          this.pendingSources.delete(captionHash);
           if (mediaId !== undefined) {
             this.pendingMediaIds.delete(captionHash);
           }
@@ -3008,16 +3289,27 @@ export class WhatsAppService extends EventEmitter {
           this.pendingMediaIds.delete(tempMediaKey);
         }
 
-        // Aguardar antes de tentar novamente
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        if (isFatal) {
+          // Frame morto: reparar antes de tentar de novo (o próprio reparo já demora o
+          // suficiente para servir de espera, não precisa do RETRY_DELAY extra)
+          try {
+            await this.selfHeal(error.message);
+          } catch (healError: any) {
+            logger.error(`[SelfHeal] Falha ao reparar antes de reenviar mídia para ${contactNumber}: ${healError.message}`);
+          }
+        } else {
+          logger.warn(`Aguardando ${RETRY_DELAY}ms antes de tentar novamente...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        }
 
         // Tentar novamente
-        return this.sendMedia(contactNumber, filePath, caption, isFromAI, mediaId, retryCount + 1);
+        return this.sendMedia(contactNumber, filePath, caption, isFromAI, mediaId, retryCount + 1, lid, source);
       }
 
       // Limpar hash temporário em caso de erro definitivo
-      if (isFromAI && captionHash) {
+      if ((isFromAI || source !== 'human') && captionHash) {
         this.pendingAIMessages.delete(captionHash);
+        this.pendingSources.delete(captionHash);
         if (mediaId !== undefined) {
           this.pendingMediaIds.delete(captionHash);
         }
@@ -3171,6 +3463,86 @@ export class WhatsAppService extends EventEmitter {
   }
 
   /**
+   * Reconhece a família de erros fatais do Puppeteer que indicam que a página/frame
+   * do WhatsApp Web morreu por baixo dos panos (ex: WhatsApp Web fez um reload interno
+   * após ficar muito tempo ocioso). Nesses casos o cliente fica com uma referência presa
+   * a uma página que não existe mais, mesmo que isReady() ainda diga que está tudo certo.
+   */
+  private isFatalPuppeteerError(error: any): boolean {
+    const msg = String(error?.message || error || '');
+    return /detached Frame|Session closed|Target closed|Protocol error/i.test(msg);
+  }
+
+  /**
+   * Repara o cliente WhatsApp reiniciando o Puppeteer (mesma rotina de destruir + relançar
+   * já usada na reconexão automática do servidor -ver initialize()). A sessão fica salva em
+   * disco (LocalAuth), então isso não pede QR code novo, só recarrega a aba com o mesmo login.
+   * Single-flight por instância: chamadas concorrentes aguardam o mesmo reparo em vez de
+   * disparar vários Chromes ao mesmo tempo.
+   */
+  private async selfHeal(motivo: string): Promise<void> {
+    if (this.healPromise) {
+      logger.info(`[SelfHeal] Reparo já em andamento para usuário ${this.userId}, aguardando conclusão...`);
+      return this.healPromise;
+    }
+
+    const agora = Date.now();
+    if (agora - this.lastSelfHealAt < this.SELF_HEAL_COOLDOWN_MS) {
+      logger.debug(`[SelfHeal] Cooldown ativo para usuário ${this.userId} (último reparo há ${agora - this.lastSelfHealAt}ms). Pulando novo reparo.`);
+      return;
+    }
+    this.lastSelfHealAt = agora;
+
+    logger.warn(`[SelfHeal] Erro fatal do Puppeteer detectado para usuário ${this.userId}: ${motivo}. Reiniciando cliente WhatsApp...`);
+
+    this.healPromise = (async () => {
+      try {
+        // Zerar as flags ANTES de chamar initialize(): ele recusa rodar se isClientReady
+        // ainda estiver true (trava contra múltiplas conexões) -mas aqui sabemos que a
+        // flag está mentindo, o frame já está morto.
+        this.isClientReady = false;
+        this.isInitialized = false;
+
+        // Com o frame morto, client.destroy() muitas vezes não consegue avisar o Chrome via
+        // CDP para fechar, deixando um processo órfão que ainda segura o lock do userDataDir.
+        // initialize() falha então com "The browser is already running ... Use a different
+        // userDataDir or stop the running browser first." Por isso fechamos o browser e
+        // matamos o processo Chrome desta sessão (mesmo padrão de disconnect()/logout(),
+        // escopado à pasta session-user_{id} deste usuário) ANTES de chamar initialize().
+        await this.closeBrowserSafely();
+        if (this.client) {
+          try {
+            await this.client.destroy();
+          } catch (destroyError: any) {
+            logger.warn(`[SelfHeal] Erro ao destruir cliente antigo para usuário ${this.userId}: ${destroyError.message}. Continuando...`);
+          }
+          this.client = null;
+        }
+
+        const sessionPath = process.env.WHATSAPP_SESSION_PATH || './whatsapp_sessions';
+        const userSessionPath = path.join(sessionPath, `user_${this.userId}`);
+        await this.killBrowserProcessesForSession(userSessionPath);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const localAuthPath = this.getLocalAuthSessionPath();
+        if (fs.existsSync(localAuthPath)) {
+          this.removeLockFilesFromSession(localAuthPath);
+        }
+
+        await this.initialize();
+        logger.info(`[SelfHeal] Cliente WhatsApp reiniciado com sucesso para usuário ${this.userId}.`);
+      } catch (error: any) {
+        logger.error(`[SelfHeal] Falha ao reiniciar cliente WhatsApp para usuário ${this.userId}: ${error.message}`);
+        throw error;
+      } finally {
+        this.healPromise = null;
+      }
+    })();
+
+    return this.healPromise;
+  }
+
+  /**
    * Executar ação de keep-alive para manter sessão ativa
    * Realiza verificação do estado e atualiza o banco de dados
    * IMPORTANTE: Tenta reativar UMA vez por ciclo. Continua indefinidamente.
@@ -3232,6 +3604,15 @@ export class WhatsAppService extends EventEmitter {
           try {
             await this.sessionModel.updateByUserId(this.userId, {});
           } catch { /* ignorar */ }
+
+          // Frame morto -a reativação nunca vai funcionar sozinha. Reparar agora.
+          if (this.isFatalPuppeteerError(reactivateError)) {
+            try {
+              await this.selfHeal(reactivateError.message);
+            } catch (healError: any) {
+              logger.error(`[SelfHeal] Falha ao reparar durante tentativa de reativação: ${healError.message}`);
+            }
+          }
         }
 
         // Se atingiu o limite de erros, marcar como 'connection_failed' (NÃO 'disconnected')
@@ -3265,6 +3646,16 @@ export class WhatsAppService extends EventEmitter {
       try {
         await this.sessionModel.updateByUserId(this.userId, {});
       } catch { /* ignorar */ }
+
+      // Frame morto -getState() nunca mais vai responder sozinho. Reparar agora em vez
+      // de esperar mais 3 ciclos (45min) até bater o limite de connection_failed.
+      if (this.isFatalPuppeteerError(error)) {
+        try {
+          await this.selfHeal(error.message);
+        } catch (healError: any) {
+          logger.error(`[SelfHeal] Falha ao reparar durante keep-alive: ${healError.message}`);
+        }
+      }
 
       // Se atingiu limite, marcar como 'connection_failed' mas continuar tentando
       if (this.keepAliveErrorCount >= this.MAX_KEEPALIVE_ERRORS) {

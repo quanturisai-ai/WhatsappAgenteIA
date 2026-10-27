@@ -3,18 +3,18 @@ import path from 'path';
 import multer from 'multer';
 import logger from '../utils/logger';
 import { MediaModel } from '../models/media.model';
-import { OllamaService } from './ollama.service';
+import { OpenRouterService } from './openrouter.service';
 import { ChromaDBService } from './chromadb.service';
 
 export class MediaService {
   private mediaModel: MediaModel;
-  private ollamaService: OllamaService;
+  private ollamaService: OpenRouterService;
   private chromaService: ChromaDBService;
   private uploadPath: string;
 
   constructor() {
     this.mediaModel = new MediaModel();
-    this.ollamaService = new OllamaService();
+    this.ollamaService = new OpenRouterService();
     this.chromaService = new ChromaDBService();
     this.uploadPath = path.join(process.cwd(), 'uploads', 'medias');
     

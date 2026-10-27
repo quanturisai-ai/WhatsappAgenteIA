@@ -30,6 +30,8 @@ export interface Conversation {
   messageCount: number;
   needsIntervention?: boolean;
   interventionResolvedAt?: string | null;
+  handler?: 'none' | 'ai' | 'human'; // Quem está atendendo a conversa agora
+  origin?: 'inbound' | 'campaign' | 'outbound'; // Como a conversa nasceu
   cliente?: ClienteData | null;
 }
 

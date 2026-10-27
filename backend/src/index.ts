@@ -424,8 +424,10 @@ initDatabase()
       logger.warn('   Inicie manualmente: chroma run --host localhost --port 8000 --path ./chroma_db');
     }
 
-    // Verificar/iniciar Whisper Transcription Service (até 10 tentativas)
-    if (process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true') {
+    // Verificar/iniciar Whisper Transcription Service (apenas se usando provedor local)
+    // Quando AUDIO_TRANSCRIPTION_PROVIDER=openrouter, o serviço Python local não é necessário
+    const transcriptionProvider = process.env.AUDIO_TRANSCRIPTION_PROVIDER || 'openrouter';
+    if (process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true' && transcriptionProvider === 'local') {
       try {
         const { WhisperServiceManager } = await import('./utils/whisperServiceManager');
         whisperServiceManager = new WhisperServiceManager();
@@ -434,6 +436,8 @@ initDatabase()
         logger.warn(`⚠️  Whisper Service não disponível: ${error.message}`);
         logger.warn('   Áudios serão salvos sem transcrição');
       }
+    } else if (process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true') {
+      logger.info('🎙️ Transcrição de áudio via OpenRouter (%s)', process.env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/whisper-large-v3-turbo');
     }
 
     // Inicializar sessões WhatsApp ativas ao iniciar o servidor

@@ -131,22 +131,33 @@ export class ChromaDBService {
       metadata?: Record<string, any>;
     }>
   ): Promise<void> {
-    try {
+    const collectionName = `user_${userId}`;
+    const ids = documents.map((doc) => doc.id);
+    const embeddings = documents.map((doc) => doc.embedding);
+    const texts = documents.map((doc) => doc.text);
+    const metadatas = documents.map((doc) => doc.metadata || {});
+
+    const doUpsert = async () => {
       const collection = await this.getOrCreateCollection(userId);
+      await collection.upsert({ ids, embeddings, documents: texts, metadatas });
+    };
 
-      const ids = documents.map((doc) => doc.id);
-      const embeddings = documents.map((doc) => doc.embedding);
-      const texts = documents.map((doc) => doc.text);
-      const metadatas = documents.map((doc) => doc.metadata || {});
-
-      // Usar upsert para adicionar ou atualizar documentos existentes
-      await collection.upsert({
-        ids,
-        embeddings,
-        documents: texts,
-        metadatas,
-      });
-
+    try {
+      try {
+        await doUpsert();
+      } catch (firstError: any) {
+        if (
+          firstError.message?.includes('not found') ||
+          firstError.message?.includes('does not exist') ||
+          firstError.message?.includes('could not be found')
+        ) {
+          logger.warn(`[ChromaDB] Coleção ${collectionName} stale no cache — reconectando...`);
+          this.collections.delete(collectionName);
+          await doUpsert();
+        } else {
+          throw firstError;
+        }
+      }
       logger.info(`Adicionados/atualizados ${documents.length} documentos na coleção do usuário ${userId}`);
     } catch (error: any) {
       logger.error(`Erro ao adicionar/atualizar documentos no ChromaDB: ${error.message}`);
@@ -163,16 +174,35 @@ export class ChromaDBService {
     nResults: number = 5,
     maxDistance?: number
   ): Promise<Array<{ id: string; text: string; distance: number; metadata?: Record<string, any> }>> {
-    try {
+    const collectionName = `user_${userId}`;
+
+    const doQuery = async () => {
       const collection = await this.getOrCreateCollection(userId);
-
-      // Buscar mais resultados se houver threshold para filtrar depois
       const searchResults = maxDistance !== undefined ? Math.max(nResults * 2, 10) : nResults;
-
-      const results = await collection.query({
+      return collection.query({
         queryEmbeddings: [queryEmbedding],
         nResults: searchResults,
       });
+    };
+
+    try {
+      let results: any;
+      try {
+        results = await doQuery();
+      } catch (firstError: any) {
+        // Se a coleção foi recriada (ID diferente do cacheado), limpar cache e tentar novamente
+        if (
+          firstError.message?.includes('not found') ||
+          firstError.message?.includes('does not exist') ||
+          firstError.message?.includes('could not be found')
+        ) {
+          logger.warn(`[ChromaDB] Coleção ${collectionName} não encontrada no cache — limpando e reconectando...`);
+          this.collections.delete(collectionName);
+          results = await doQuery();
+        } else {
+          throw firstError;
+        }
+      }
 
       if (!results.documents || results.documents.length === 0) {
         return [];
@@ -188,7 +218,6 @@ export class ChromaDBService {
       for (let i = 0; i < results.ids[0].length; i++) {
         const distance = results.distances?.[0]?.[i] || 0;
         
-        // Filtrar por threshold de similaridade se fornecido
         if (maxDistance !== undefined && distance >= maxDistance) {
           continue;
         }
@@ -201,7 +230,6 @@ export class ChromaDBService {
         });
       }
 
-      // Retornar apenas os top N resultados
       return documents.slice(0, nResults);
     } catch (error: any) {
       logger.error(`Erro ao buscar documentos no ChromaDB: ${error.message}`);

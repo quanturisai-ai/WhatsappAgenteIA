@@ -127,11 +127,6 @@ export class ConversationService {
         return;
       }
 
-      // Atualizar status da conversa
-      await this.conversationModel.update(conversationId, {
-        status: 'in_progress',
-      });
-
       logger.info(`Iniciando processamento de mensagem para conversa ${conversationId}`);
 
       // Buscar número do contato para envio de mídias
@@ -141,12 +136,12 @@ export class ConversationService {
       }
 
       // Enviar mídias obrigatórias ANTES da resposta da IA
-      await this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService);
+      await this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService, conversation.lid);
 
       // Detectar comando #contatoia (não remover da mensagem, apenas detectar)
       const hasContatoIA = messageContent.toLowerCase().includes('#contatoia');
       let includeHistory = true;
-      
+
       if (hasContatoIA) {
         includeHistory = false;
         logger.info(`🔍 Comando #contatoia detectado na conversa ${conversationId} - histórico da conversa será omitido`);
@@ -154,18 +149,33 @@ export class ConversationService {
 
       // Gerar resposta usando RAG
       // Adicionar timeout para evitar que processos travados causem problemas
-      const response = await Promise.race([
-        this.ragService.processMessageAndRespond(
-          userId,
-          conversationId,
-          messageContent, // Usar mensagem ORIGINAL (com #contatoia)
-          true, // usar RAG
-          includeHistory // Passar flag para incluir ou não histórico
-        ),
-        new Promise<string>((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
-        )
-      ]);
+      let response: string;
+      try {
+        response = await Promise.race([
+          this.ragService.processMessageAndRespond(
+            userId,
+            conversationId,
+            messageContent, // Usar mensagem ORIGINAL (com #contatoia)
+            true, // usar RAG
+            includeHistory // Passar flag para incluir ou não histórico
+          ),
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
+          )
+        ]);
+      } catch (ragError: any) {
+        // A IA não conseguiu gerar resposta (falha ou timeout do RAG). Antes, a conversa
+        // já tinha sido marcada 'in_progress' no início desta função, então o card ficava
+        // em "Em Atendimento" sem nenhuma resposta ter sido enviada ao cliente (falso positivo
+        // silencioso). Agora: nenhuma mensagem foi enviada ainda, então o status permanece
+        // o que já era; marcamos precisa-intervenção para o atendente ser avisado.
+        logger.error(`Erro ao gerar resposta via RAG para conversa ${conversationId}: ${ragError.message}`);
+        await this.conversationModel.update(conversationId, {
+          needs_intervention: true,
+        });
+        await this.emitConversationCardIfFound(conversationId);
+        return;
+      }
 
       logger.info(`Resposta gerada para conversa ${conversationId}: "${response.substring(0, 50)}..."`);
 
@@ -224,7 +234,7 @@ export class ConversationService {
           logger.info(`📱 Número normalizado: ${proactiveContact.numero} → ${normalizedNumber}`);
 
           // Enviar mensagem proativa para o número especificado
-          await whatsappService.sendMessage(normalizedNumber, proactiveContact.mensagem, true);
+          await whatsappService.sendMessage(normalizedNumber, proactiveContact.mensagem, true, false, null, 'ai');
 
           logger.info(`✅ Mensagem proativa enviada com sucesso para ${normalizedNumber}`);
         } catch (error: any) {
@@ -261,7 +271,7 @@ export class ConversationService {
               // Se houver múltiplas mídias, usar a mesma resposta para todas
               const caption = cleanedResponse.trim() || undefined;
               
-              await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId);
+              await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId, 0, conversation.lid, 'ai');
               
               // Registrar que a mídia foi enviada (para estatísticas, mas não bloqueia reenvio)
               await this.mediaSentTrackingModel.markMediaAsSent(conversationId, mediaId);
@@ -285,19 +295,39 @@ export class ConversationService {
           // Nenhuma mídia foi enviada (todas falharam ou não foram encontradas)
           // Enviar a mensagem de texto normalmente para o cliente não ficar sem resposta
           logger.warn(`Nenhuma mídia foi enviada com sucesso - enviando resposta da IA como mensagem de texto`);
-          await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true);
+          await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai');
         }
       } else {
         // Se não houver mídias, enviar resposta via WhatsApp normalmente
         // Não salvar manualmente aqui - o handleOutgoingMessage vai salvar automaticamente
-        await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true);
+        await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai');
       }
+
+      // Só marcar a conversa como 'in_progress' (IA atendendo) DEPOIS do envio ter sido
+      // efetivamente disparado com sucesso — antes isso era feito no início da função,
+      // o que classificava a conversa como "Em Atendimento" mesmo quando a IA falhava.
+      await this.conversationModel.update(conversationId, {
+        status: 'in_progress',
+        handler: 'ai',
+      });
+      await this.emitConversationCardIfFound(conversationId);
 
       logger.info(`Resposta automática enviada para conversa ${conversationId}`);
     } catch (error: any) {
       logger.error(`Erro ao processar mensagem recebida para conversa ${conversationId}: ${error.message}`);
       logger.error(`Stack trace: ${error.stack}`);
-      
+
+      // Falha inesperada (ex.: envio ao WhatsApp falhou) também não pode ficar invisível:
+      // marcar como precisa-intervenção em vez de deixar o card em status indefinido.
+      try {
+        await this.conversationModel.update(conversationId, {
+          needs_intervention: true,
+        });
+        await this.emitConversationCardIfFound(conversationId);
+      } catch (innerError: any) {
+        logger.error(`Erro ao marcar conversa ${conversationId} como precisa-intervenção após falha: ${innerError.message}`);
+      }
+
       // Não lançar erro - apenas logar para evitar crash
       // O processamento continua mesmo se uma mensagem falhar
     }
@@ -310,6 +340,7 @@ export class ConversationService {
     await this.pauseAutoResponding(conversationId);
     await this.conversationModel.update(conversationId, {
       status: 'in_progress',
+      handler: 'human',
     });
     logger.info(`Conversa ${conversationId} assumida manualmente`);
   }
@@ -322,6 +353,8 @@ export class ConversationService {
     await this.conversationModel.update(conversationId, {
       status: 'finished',
       auto_responding: true,
+      needs_intervention: false,
+      handler: 'none',
     });
     await this.emitConversationCardIfFound(conversationId);
     logger.info(`Atendimento encerrado para conversa ${conversationId}`);
@@ -346,10 +379,14 @@ export class ConversationService {
    */
   async finalizeOldConversations(): Promise<number> {
     try {
-      // Buscar TODAS as conversas ativas (new ou in_progress) com última mensagem
-      // Não usar filtro de data inicial - buscar todas e depois filtrar por max_age_hours de cada usuário
-      const allActiveConversations = await this.conversationModel.findActiveConversations();
-      
+      // Buscar TODAS as conversas ativas (new ou in_progress) com a data da última
+      // mensagem RECEBIDA DO CLIENTE. Antes este job usava last_message_at, que é
+      // renovado por qualquer mensagem enviada — inclusive disparos automáticos de
+      // fidelização/campanha — então uma conversa podia ficar "viva" para sempre mesmo
+      // com o cliente inativo. Fallback para last_message_at só quando a conversa nunca
+      // teve mensagem do cliente (ex.: criada por um disparo em lote).
+      const allActiveConversations = await this.conversationModel.findActiveConversationsWithLastClientMessage();
+
       if (!allActiveConversations || allActiveConversations.length === 0) {
         logger.debug('Nenhuma conversa ativa encontrada para verificar finalização');
         return 0;
@@ -360,8 +397,9 @@ export class ConversationService {
       // Agrupar conversas por user_id
       const conversationsByUser = new Map<number, typeof allActiveConversations>();
       for (const conversation of allActiveConversations) {
-        if (!conversation.last_message_at) {
-          continue; // Pular conversas sem última mensagem
+        const referenceDate = conversation.last_client_message_at || conversation.last_message_at;
+        if (!referenceDate) {
+          continue; // Pular conversas sem nenhuma mensagem de referência
         }
         if (!conversationsByUser.has(conversation.user_id)) {
           conversationsByUser.set(conversation.user_id, []);
@@ -390,25 +428,27 @@ export class ConversationService {
 
           logger.debug(`Usuário ${userId}: verificando conversas com última mensagem anterior a ${maxAgeDate.toISOString()} (max_age_hours: ${maxAgeHours}h)`);
 
-          // Filtrar conversas deste usuário que são mais antigas que max_age_hours
+          // Filtrar conversas deste usuário cuja última mensagem DO CLIENTE é mais antiga
+          // que max_age_hours (fallback para last_message_at se o cliente nunca falou)
           for (const conversation of conversations) {
             try {
-              if (!conversation.last_message_at) {
+              const referenceDate = conversation.last_client_message_at || conversation.last_message_at;
+              if (!referenceDate) {
                 continue;
               }
 
-              const lastMessageDate = new Date(conversation.last_message_at);
-              
-              // Se a última mensagem é mais antiga que max_age_hours, finalizar
-              if (lastMessageDate < maxAgeDate && conversation.status !== 'finished') {
-                const hoursAgo = Math.round((Date.now() - lastMessageDate.getTime()) / (1000 * 60 * 60));
+              const lastRelevantDate = new Date(referenceDate);
+
+              // Se a última mensagem relevante é mais antiga que max_age_hours, finalizar
+              if (lastRelevantDate < maxAgeDate && conversation.status !== 'finished') {
+                const hoursAgo = Math.round((Date.now() - lastRelevantDate.getTime()) / (1000 * 60 * 60));
                 await this.conversationModel.update(conversation.id, {
                   status: 'finished',
                 });
                 finalizedCount++;
                 logger.info(
                   `Conversa ${conversation.id} (${conversation.contact_name || conversation.contact_number}) ` +
-                  `finalizada automaticamente - última mensagem: ${conversation.last_message_at} ` +
+                  `finalizada automaticamente - última mensagem relevante: ${referenceDate} ` +
                   `(${hoursAgo}h atrás, max_age_hours: ${maxAgeHours}h para usuário ${userId})`
                 );
               }
@@ -443,7 +483,8 @@ export class ConversationService {
     userId: number,
     conversationId: number,
     contactNumber: string,
-    whatsappService: WhatsAppService
+    whatsappService: WhatsAppService,
+    lid?: string | null
   ): Promise<void> {
     try {
       // Buscar mídias obrigatórias ativas
@@ -519,7 +560,7 @@ export class ConversationService {
           // Usar campo caption se disponível e não vazio, caso contrário não enviar caption
           const caption = media.caption && media.caption.trim() ? media.caption.trim() : undefined;
           
-          await whatsappService.sendMedia(contactNumber, media.file_path, caption, true, media.id);
+          await whatsappService.sendMedia(contactNumber, media.file_path, caption, true, media.id, 0, lid, 'ai');
           
           // Registrar que foi enviada
           await this.mediaSentTrackingModel.markMediaAsSent(conversationId, media.id);

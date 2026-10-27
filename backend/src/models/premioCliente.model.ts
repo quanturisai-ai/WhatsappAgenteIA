@@ -17,13 +17,21 @@ export interface PremioCliente {
   voucher_tentativa_em: Date | null;
   voucher_erro_ultimo: string | null;
   conquista_notificacao_id: number | null;
+  /** Valor do voucher no momento da geração (para detectar divergência sem depender do sync vm_lav_vouchers) */
+  valor_voucher_gerado: number | null;
+  /** Código do voucher inativado na última reemissão por reajuste de valor */
+  codigo_voucher_anterior: string | null;
+  /** Quando o voucher foi reemitido por reajuste de valor */
+  voucher_atualizado_em: Date | null;
   created_at: Date;
   updated_at: Date;
 }
 
 const PC_SELECT = `id, user_id, cpf_cliente, premio_id, data_conquista, data_validade, 
          data_utilizacao, utilizado, codigo_voucher, observacao, data_entrega, voucher_tentativa_em, 
-         voucher_erro_ultimo, conquista_notificacao_id, created_at, updated_at`;
+         voucher_erro_ultimo, conquista_notificacao_id, valor_voucher_gerado,
+         codigo_voucher_anterior, voucher_atualizado_em,
+         created_at, updated_at`;
 
 export class PremioClienteModel {
   async findById(id: number): Promise<PremioCliente | null> {
@@ -279,19 +287,72 @@ export class PremioClienteModel {
     }
   }
 
-  async atualizarVoucher(id: number, codigo: string | null, validade: Date | null): Promise<PremioCliente> {
+  async atualizarVoucher(
+    id: number,
+    codigo: string | null,
+    validade: Date | null,
+    valorGerado?: number | null
+  ): Promise<PremioCliente> {
     const conn = await pool.getConnection();
     try {
-      await conn.query(
-        `UPDATE premios_clientes 
-         SET codigo_voucher = ?, data_validade = ?
-         WHERE id = ?`,
-        [codigo, validade, id]
-      );
+      if (valorGerado !== undefined) {
+        await conn.query(
+          `UPDATE premios_clientes 
+           SET codigo_voucher = ?, data_validade = ?, valor_voucher_gerado = ?
+           WHERE id = ?`,
+          [codigo, validade, valorGerado, id]
+        );
+      } else {
+        await conn.query(
+          `UPDATE premios_clientes 
+           SET codigo_voucher = ?, data_validade = ?
+           WHERE id = ?`,
+          [codigo, validade, id]
+        );
+      }
 
       const updated = await this.findById(id);
       if (!updated) {
         throw new Error('Erro ao atualizar voucher do prêmio');
+      }
+      return updated;
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * Registra a reemissão de voucher por reajuste de valor.
+   * Persiste código anterior, limpa backoff e atualiza código/validade.
+   */
+  async registrarReemissaoVoucher(
+    id: number,
+    novoCodigo: string,
+    novaValidade: Date,
+    codigoAnterior: string,
+    novoValorGerado: number
+  ): Promise<PremioCliente> {
+    const conn = await pool.getConnection();
+    try {
+      await conn.query(
+        `UPDATE premios_clientes 
+         SET codigo_voucher = ?,
+             data_validade = ?,
+             valor_voucher_gerado = ?,
+             codigo_voucher_anterior = ?,
+             voucher_atualizado_em = NOW(),
+             voucher_tentativa_em = NULL,
+             voucher_erro_ultimo = NULL,
+             observacao = CONCAT(COALESCE(observacao, ''),
+               IF(COALESCE(observacao,'') <> '', '\n', ''),
+               CONCAT('Reemitido em ', DATE_FORMAT(NOW(), '%d/%m/%Y'), ' (', ?, ' → ', ?, ')'))
+         WHERE id = ?`,
+        [novoCodigo, novaValidade, novoValorGerado, codigoAnterior, codigoAnterior, novoCodigo, id]
+      );
+
+      const updated = await this.findById(id);
+      if (!updated) {
+        throw new Error('Erro ao registrar reemissão do voucher');
       }
       return updated;
     } finally {
@@ -350,6 +411,9 @@ export class PremioClienteModel {
       voucher_tentativa_em: row.voucher_tentativa_em ?? null,
       voucher_erro_ultimo: row.voucher_erro_ultimo ?? null,
       conquista_notificacao_id: row.conquista_notificacao_id != null ? Number(row.conquista_notificacao_id) : null,
+      valor_voucher_gerado: row.valor_voucher_gerado != null ? parseFloat(row.valor_voucher_gerado) : null,
+      codigo_voucher_anterior: row.codigo_voucher_anterior ?? null,
+      voucher_atualizado_em: row.voucher_atualizado_em ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };

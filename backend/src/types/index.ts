@@ -21,6 +21,11 @@ export interface WhatsAppSession {
   updated_at: Date;
 }
 
+// Origem real da mensagem — ver backend/PLANO_MELHORIA_CLASSIFICACAO_CONVERSAS.md (Fase 2/3).
+// Substitui, na prática, a ambiguidade de is_from_ai=false nas mensagens outgoing, que antes
+// misturava atendente humano e disparos automáticos de fidelização/campanha no mesmo valor.
+export type MessageSource = 'client' | 'ai' | 'human' | 'automation';
+
 export interface Conversation {
   id: number;
   user_id: number;
@@ -33,6 +38,9 @@ export interface Conversation {
   last_message?: string; // Última mensagem da conversa (limitada a 50 caracteres)
   needs_intervention?: boolean;
   intervention_resolved_at?: Date | null;
+  handler?: 'none' | 'ai' | 'human'; // Quem está atendendo a conversa agora
+  origin?: 'inbound' | 'campaign' | 'outbound'; // Como a conversa nasceu
+  last_client_message_at?: Date | null; // Última mensagem recebida do cliente (direction=incoming)
   created_at: Date;
   updated_at: Date;
 }
@@ -46,6 +54,7 @@ export interface Message {
   media_id?: number | null;
   direction: 'incoming' | 'outgoing';
   is_from_ai: boolean;
+  source?: MessageSource | null;
   created_at: Date;
   received_at?: Date | null; // Data/hora em que a mensagem foi recebida (ack=1)
   read_at?: Date | null; // Data/hora em que a mensagem foi lida (ack=2)
@@ -79,6 +88,7 @@ export interface AgentConfig {
   top_k?: number; // Limita tokens considerados (1-100) - padrão: 40
   repeat_penalty?: number; // Penaliza repetições (0.0-2.0) - padrão: 1.1
   max_age_hours?: number; // Idade máxima em horas para histórico e finalização de conversas - padrão: 12
+  pause_on_human_reply?: boolean | number; // Pausar auto-resposta quando um humano responde manualmente (dashboard ou celular) - padrão: true
   created_at: Date;
   updated_at: Date;
 }
