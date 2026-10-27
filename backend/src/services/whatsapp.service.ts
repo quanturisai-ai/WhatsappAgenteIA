@@ -1,4 +1,5 @@
 import { Client, LocalAuth, Message, Chat, MessageMedia } from 'whatsapp-web.js';
+import { SyncZapClient } from './synczap.client';
 import qrcode from 'qrcode-terminal';
 import { EventEmitter } from 'events';
 import path from 'path';
@@ -18,8 +19,10 @@ import { MessageSource } from '../types';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
 import { setupPuppeteerCache, detectChrome } from '../utils/puppeteer.util';
-setupPuppeteerCache();
-const chromeExecFound = detectChrome();
+if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
+  setupPuppeteerCache();
+}
+const chromeExecFound = process.env.WHATSAPP_PROVIDER === 'synczap' ? undefined : detectChrome();
 
 // 📌 Versão do WhatsApp Web fixada (ver uso em `new Client(...)` abaixo).
 // Motivo: builds novas do WhatsApp Web (a partir de ~2026-09-07 à tarde) quebraram a
@@ -322,7 +325,7 @@ export class WhatsAppService extends EventEmitter {
     // ✅ CORREÇÃO: Se há erro "connection_failed" de tentativa anterior, limpar processos Chrome e locks
     // antes de tentar inicializar. Isso resolve "browser already running" em reconexões.
     // Os arquivos de sessão (.wwebjs_auth, Default) são preservados para reconexão automática.
-    if (retryCount === 0) {
+    if (retryCount === 0 && process.env.WHATSAPP_PROVIDER !== 'synczap') {
       try {
         const currentSession = await this.sessionModel.findByUserId(this.userId);
         if (currentSession?.status === 'connection_failed') {
@@ -447,7 +450,7 @@ export class WhatsAppService extends EventEmitter {
           logger.info(`[Session Check] Tentando reutilizar sessão existente sem gerar novo QR code...`);
           // NÃO limpar QR code -manter para tentar reutilizar
           // O LocalAuth vai tentar reutilizar automaticamente
-        } else if (existingSession && existingSession.qr_code && !sessionCheck.exists) {
+        } else if (process.env.WHATSAPP_PROVIDER !== 'synczap' && existingSession && existingSession.qr_code && !sessionCheck.exists) {
           // Só limpar QR code se não houver arquivos de sessão válidos
           logger.info(`⚠️ Nenhum arquivo de sessão válido encontrado para usuário ${this.userId} em ${sessionCheck.path}`);
           logger.info(`[Session Check] Limpando QR code antigo antes de gerar novo...`);
@@ -488,7 +491,7 @@ export class WhatsAppService extends EventEmitter {
       // IMPORTANTE: Limpar processos órfãos do Chrome antes de inicializar
       // Baseado nas issues do repositório: processos órfãos causam conflitos e LOGOUT imediato
       // IMPORTANTE: Aguardar a limpeza de processos antes de continuar
-      try {
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap') try {
         const { exec } = require('child_process');
         if (process.platform === 'win32') {
           // No Windows, verificar e fechar processos do Chrome relacionados ao WhatsApp
@@ -554,7 +557,7 @@ export class WhatsAppService extends EventEmitter {
             logger.info(`[Session Check] Tentando reutilizar sessão existente...`);
             // NÃO limpar -tentar reutilizar a sessão existente
             // O LocalAuth vai tentar reutilizar automaticamente
-          } else {
+          } else if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
             // Se os arquivos não existem mas o status é 'connected', pode ser uma inconsistência
             // Atualizar status para 'connection_failed' (falha técnica, não desconexão manual)
             logger.warn(`⚠️ Sessão 'connected' encontrada para usuário ${this.userId} mas arquivos de sessão não existem em ${sessionCheck.path}`);
@@ -594,7 +597,7 @@ export class WhatsAppService extends EventEmitter {
       }
 
       // Criar diretório de sessões se não existir
-      if (!fs.existsSync(userSessionPath)) {
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap' && !fs.existsSync(userSessionPath)) {
         fs.mkdirSync(userSessionPath, { recursive: true });
       }
 
@@ -637,7 +640,7 @@ export class WhatsAppService extends EventEmitter {
               session_files_path: sessionCheck.path,
             });
           }
-        } else if (currentSession.status !== 'disconnected' && currentSession.status !== 'connecting' && currentSession.status !== 'connection_failed') {
+        } else if (process.env.WHATSAPP_PROVIDER !== 'synczap' && currentSession.status !== 'disconnected' && currentSession.status !== 'connecting' && currentSession.status !== 'connection_failed') {
           // Só atualizar status se não houver arquivos de sessão válidos
           logger.warn(`⚠️ Sessão com status '${currentSession.status}' encontrada mas sem arquivos de sessão válidos em ${sessionCheck.path}`);
           logger.warn(`[Session Check] Atualizando para 'connection_failed' antes de inicializar...`);
@@ -649,8 +652,14 @@ export class WhatsAppService extends EventEmitter {
         }
       }
 
+      let chromeExec: any;
+      let puppeteerArgs: string[] = [];
+      let puppeteerConfig: any = {};
+      if (process.env.WHATSAPP_PROVIDER === 'synczap') {
+        this.client = new SyncZapClient() as unknown as Client;
+      } else {
       // Detectar Google Chrome para melhor estabilidade
-      let chromeExec = detectChrome();
+      chromeExec = detectChrome();
 
       // Cache do Puppeteer já foi configurado no início do arquivo
       // Apenas verificar se o diretório existe
@@ -668,7 +677,7 @@ export class WhatsAppService extends EventEmitter {
       // Argumentos para evitar conflitos de perfil do Chrome no Windows (erro 32: Lock file)
       // E também para evitar erro de criptografia do Windows
       // ✅ Argumentos otimizados do Puppeteer (baseado em pesquisa e best practices)
-      const puppeteerArgs = [
+      puppeteerArgs = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
@@ -698,7 +707,7 @@ export class WhatsAppService extends EventEmitter {
       ];
 
       // Configurar Puppeteer -configuração otimizada
-      const puppeteerConfig: any = {
+      puppeteerConfig = {
         headless: true,
         args: puppeteerArgs,
         // 🚀 Timeout maior para permitir sincronização completa
@@ -761,6 +770,15 @@ export class WhatsAppService extends EventEmitter {
         qrMaxRetries: 5,
       });
 
+      logger.info(`Chrome executável: ${chromeExec || 'Chromium padrão do Puppeteer'}`);
+      logger.info(`Args do Puppeteer: ${puppeteerArgs.join(' ')}`);
+      if (chromeExec && !fs.existsSync(chromeExec)) {
+        logger.warn(`⚠️ Chrome executável não encontrado em ${chromeExec}, usando Chromium padrão`);
+        chromeExec = undefined;
+        delete puppeteerConfig.executablePath;
+      }
+      }
+
       // Configurar eventos
       this.setupEvents();
 
@@ -774,16 +792,6 @@ export class WhatsAppService extends EventEmitter {
 
       // Inicializar cliente com timeout aumentado
       logger.info(`Iniciando inicialização do WhatsApp para usuário ${this.userId}...`);
-      logger.info(`Chrome executável: ${chromeExec || 'Chromium padrão do Puppeteer'}`);
-      logger.info(`Args do Puppeteer: ${puppeteerArgs.join(' ')}`);
-
-      // Verificar se o Chrome existe antes de inicializar
-      if (chromeExec && !fs.existsSync(chromeExec)) {
-        logger.warn(`⚠️ Chrome executável não encontrado em ${chromeExec}, usando Chromium padrão`);
-        chromeExec = undefined;
-        // Atualizar configuração do Puppeteer
-        delete puppeteerConfig.executablePath;
-      }
 
       // Inicializar cliente (sem timeout customizado -deixar o Puppeteer gerenciar)
       logger.info(`Iniciando client.initialize() para usuário ${this.userId}...`);
@@ -818,7 +826,7 @@ export class WhatsAppService extends EventEmitter {
 
 
       // Auto-recovery para erro "Browser already running" ou "Lock file"
-      if ((error.message.includes('browser is already running') ||
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap' && (error.message.includes('browser is already running') ||
         error.message.includes('Lock file can not be created') ||
         error.message.includes('EBUSY')) && retryCount < 3) {
 
@@ -3509,7 +3517,9 @@ export class WhatsAppService extends EventEmitter {
         // userDataDir or stop the running browser first." Por isso fechamos o browser e
         // matamos o processo Chrome desta sessão (mesmo padrão de disconnect()/logout(),
         // escopado à pasta session-user_{id} deste usuário) ANTES de chamar initialize().
-        await this.closeBrowserSafely();
+        if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
+          await this.closeBrowserSafely();
+        }
         if (this.client) {
           try {
             await this.client.destroy();
@@ -3519,6 +3529,7 @@ export class WhatsAppService extends EventEmitter {
           this.client = null;
         }
 
+        if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
         const sessionPath = process.env.WHATSAPP_SESSION_PATH || './whatsapp_sessions';
         const userSessionPath = path.join(sessionPath, `user_${this.userId}`);
         await this.killBrowserProcessesForSession(userSessionPath);
@@ -3527,6 +3538,7 @@ export class WhatsAppService extends EventEmitter {
         const localAuthPath = this.getLocalAuthSessionPath();
         if (fs.existsSync(localAuthPath)) {
           this.removeLockFilesFromSession(localAuthPath);
+        }
         }
 
         await this.initialize();
@@ -3684,7 +3696,9 @@ export class WhatsAppService extends EventEmitter {
     if (this.client) {
       try {
         // Fechar browser explicitamente antes de destruir
-        await this.closeBrowserSafely();
+        if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
+          await this.closeBrowserSafely();
+        }
         await this.client.destroy();
       } catch (error: any) {
         // Logar erro mas continuar com a limpeza
@@ -3701,6 +3715,7 @@ export class WhatsAppService extends EventEmitter {
 
     // ✅ CRÍTICO: Limpar processos Chrome e lock files para evitar "browser already running" na reconexão
     // Isso NÃO deleta arquivos de sessão (.wwebjs_auth, Default profile) -apenas locks temporários
+    if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
     logger.info(`Aguardando 2s e limpando processos Chrome para usuário ${this.userId}...`);
     await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -3720,6 +3735,7 @@ export class WhatsAppService extends EventEmitter {
       }
     } catch (error: any) {
       logger.debug(`Erro ao remover locks no disconnect: ${error.message}`);
+    }
     }
 
     // Atualizar status no banco
@@ -3762,7 +3778,9 @@ export class WhatsAppService extends EventEmitter {
       }
 
       // Fechar o browser explicitamente (caso client.logout() não tenha fechado ou tenha falhado)
-      await this.closeBrowserSafely();
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
+        await this.closeBrowserSafely();
+      }
 
       // Sempre tentar desconectar, mesmo se logout falhou
       try {
@@ -3773,17 +3791,21 @@ export class WhatsAppService extends EventEmitter {
       }
 
       // Aguardar e matar qualquer processo Chrome que ainda esteja usando o diretório da sessão
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
       await new Promise(resolve => setTimeout(resolve, 2000));
       await this.killBrowserProcessesForSession(userSessionPath);
       await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     } else {
       logger.warn(`⚠️ Logout solicitado para usuário ${this.userId} mas não há cliente ativo. Continuando com limpeza de arquivos e banco...`);
       // Sem cliente em memória, ainda assim tentar matar processos órfãos que usem a sessão
+      if (process.env.WHATSAPP_PROVIDER !== 'synczap') {
       await this.killBrowserProcessesForSession(userSessionPath);
+      }
     }
 
     // Remover arquivos de lock (lockfile, DevToolsActivePort, SingletonLock) no diretório session-user_X
-    try {
+    if (process.env.WHATSAPP_PROVIDER !== 'synczap') try {
       const localAuthPath = this.getLocalAuthSessionPath();
       if (fs.existsSync(localAuthPath)) {
         this.removeLockFilesFromSession(localAuthPath);
@@ -3794,7 +3816,7 @@ export class WhatsAppService extends EventEmitter {
     }
 
     // ✅ CORREÇÃO: SEMPRE deletar arquivos de sessão, independente de ter cliente ou não
-    try {
+    if (process.env.WHATSAPP_PROVIDER !== 'synczap') try {
 
       if (fs.existsSync(userSessionPath)) {
         logger.info(`🗑️ Deletando arquivos de sessão para usuário ${this.userId} após logout manual...`);
