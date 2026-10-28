@@ -1286,6 +1286,11 @@ export class WhatsAppService extends EventEmitter {
       }
 
       this.readyProcessing = true;
+      // SyncZap reemite 'ready' na reconexão pelo stream, sem passar por initialize(); um 'ready'
+      // do cliente vivo prova que ele está inicializado (o 'disconnected' havia zerado a flag).
+      if (process.env.WHATSAPP_PROVIDER === 'synczap' && this.client) {
+        this.isInitialized = true;
+      }
       logger.info(`✅ WhatsApp cliente pronto para usuário ${this.userId}`);
 
       try {
@@ -3434,6 +3439,12 @@ export class WhatsAppService extends EventEmitter {
   }
 
   isReady(): boolean {
+    // SyncZap: o estado real vem do próprio cliente (instância connected e laço de eventos ativo).
+    // As flags abaixo dependem da ordem dos eventos e ficam false após um 'disconnected' seguido
+    // de reconexão pelo stream, que não passa por initialize().
+    if (process.env.WHATSAPP_PROVIDER === 'synczap') {
+      return this.client instanceof SyncZapClient && this.client.isConnected();
+    }
     // Verificar se o cliente está inicializado E realmente pronto (evento 'ready' foi disparado)
     return this.client !== null && this.isInitialized && this.isClientReady;
   }

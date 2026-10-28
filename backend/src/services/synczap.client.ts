@@ -130,6 +130,12 @@ export class SyncZapClient extends EventEmitter {
     return this.waState;
   }
 
+  // Conexão real: instância connected no gateway e laço de eventos ativo. É o que
+  // whatsapp.service.ts consulta em isReady() no modo synczap, sem depender da ordem dos eventos.
+  isConnected(): boolean {
+    return this.waState === 'CONNECTED' && !this.stopping && this.loop !== null;
+  }
+
   async getChats(): Promise<unknown[]> {
     return [];
   }
