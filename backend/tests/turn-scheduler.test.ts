@@ -145,7 +145,7 @@ test('anti-loop: rajada de mensagens pausa uma vez e não chama o LLM', async ()
   for (let i = 0; i < 12; i++) s.enqueue(1, { content: `msg ${i}?` });
   await esperar(20);
   assert.equal(loops.length, 1, 'avisa uma vez só');
-  assert.match(loops[0], /9 mensagens/);
+  assert.match(loops[0], /possível loop: 9 mensagens/);
   await s.idle(1);
   // Depois do disparo a fila foi descartada; as 3 que vieram depois seguem o fluxo normal
   // (com a IA pausada, o turno real termina como "pausado").
@@ -245,12 +245,13 @@ test('juiz #3 (2ª passada): turno enviando que passa do prazo avisa, mas não a
       return control.commit() ? 'sent' : 'superseded';
     } finally { ativos--; }
   };
-  const s = new TurnScheduler(run, () => {}, () => cfg({ turnDeadlineMs: 150 }), Date.now, (c) => { travados.push(c); });
+  // prazo 200 ms: aviso aos ~250; limite duro (pausa) só aos ~400 — o envio termina antes disso
+  const s = new TurnScheduler(run, () => {}, () => cfg({ turnDeadlineMs: 200 }), Date.now, (c) => { travados.push(c); });
   s.enqueue(1, { content: 'primeira?' });
-  await esperar(250);
+  await esperar(260);
   assert.deepEqual(travados, [1], 'avisou o turno travado');
   s.enqueue(1, { content: 'segunda?' });
-  await esperar(150);
+  await esperar(60);
   assert.equal(chamadas, 1, 'não começou outro turno enquanto o anterior ainda envia');
   soltarPendurado('sent');
   await s.idle(1);
@@ -278,6 +279,28 @@ test('juiz #3 (2ª passada): turno que passa do prazo SEM enviar é cancelado e 
   assert.deepEqual(lotes, [['pergunta original?']], 'refeito com a mensagem original');
   await esperar(150);
   assert.equal(primeiroPodeEnviar, false, 'o turno abandonado não consegue mais enviar');
+});
+
+test('juiz 3ª passada: envio que nunca termina pausa a IA (sem turno paralelo) e libera a fila', async () => {
+  const pausas: string[] = [];
+  let chamadas = 0, ativosQueEnviam = 0;
+  const run = async (_c: number, _b: PendingItem[], control: TurnControl): Promise<TurnResult> => {
+    chamadas++;
+    if (chamadas === 1) { control.commit(); ativosQueEnviam++; return new Promise<TurnResult>(() => {}); } // nunca termina
+    return 'done'; // com a IA pausada o turno real termina como "pausado", sem enviar
+  };
+  const s = new TurnScheduler(run, (_c, r) => { pausas.push(r); }, () => cfg({ turnDeadlineMs: 80 }));
+  s.enqueue(1, { content: 'pergunta?' });
+  await esperar(100);
+  s.enqueue(1, { content: 'outra?' });
+  await esperar(60);
+  assert.equal(chamadas, 1, 'antes do limite duro, nada de turno novo');
+  await esperar(120);
+  assert.equal(pausas.length, 1);
+  assert.match(pausas[0], /envio da resposta travado/);
+  await s.idle(1);
+  assert.equal(chamadas, 2, 'fila liberada depois da pausa');
+  assert.equal(ativosQueEnviam, 1);
 });
 
 test('juiz #4 (2ª passada): chegadas no mesmo milissegundo mantêm a ordem', () => {

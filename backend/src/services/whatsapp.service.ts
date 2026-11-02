@@ -2610,7 +2610,7 @@ export class WhatsAppService extends EventEmitter {
   }
 
   /**
-   * Item 2 (ANTILOOP=on): rajada de mensagens ou de respostas. Pausa a IA da conversa, marca
+   * Item 2: anti-loop (ANTILOOP=on: rajada de mensagens ou de respostas) ou envio travado. Pausa a IA da conversa, marca
    * intervenção e avisa os atendentes (aviso interno; nada é enviado ao cliente).
    */
   /** Item 2: turno passou do prazo (ex.: envio pendurado). Trava liberada; marca intervenção. */
@@ -2638,7 +2638,7 @@ export class WhatsAppService extends EventEmitter {
       await new HumanAttendantService().sendAlert(
         this.userId,
         conversationId,
-        `IA pausada automaticamente nesta conversa (possível loop: ${reason}). Verifique e reative a IA se for o caso.`,
+        `IA pausada automaticamente nesta conversa (${reason}). Verifique e reative a IA se for o caso.`,
         null,
         this
       );

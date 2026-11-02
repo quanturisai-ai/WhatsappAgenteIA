@@ -292,14 +292,28 @@ export class TurnScheduler {
         if (r === 'stuck') {
           timedOut = true;
           if (committed) {
-            // Já está enviando: não abre outro turno em paralelo. Avisa e espera ele terminar
-            // (o fetch do SyncZap tem limite próprio de ~5 min).
+            // Já está enviando: não abre outro turno em paralelo. Avisa (intervenção) e espera mais um
+            // prazo; se ainda não terminou, pausa a IA da conversa e só então libera a fila.
             logger.error(`[turnos] Conversa ${conversationId}: turno enviando há mais de ${cfg.turnDeadlineMs} ms; aguardando terminar antes do próximo`);
             Promise.resolve()
               .then(() => this.onStuck(conversationId, this.now() - turnStartedAt))
               .catch((e: any) => logger.error(`[turnos] Erro ao tratar turno travado da conversa ${conversationId}: ${e?.message || e}`));
             timedOut = false;
-            result = await turn.catch(() => 'done' as TurnResult);
+            let hardTimer: NodeJS.Timeout | undefined;
+            const hard = new Promise<'hard'>((resolve) => { hardTimer = setTimeout(() => resolve('hard'), cfg.turnDeadlineMs); });
+            const r2 = await Promise.race([turn.catch(() => 'done' as TurnResult), hard]);
+            if (hardTimer) clearTimeout(hardTimer);
+            if (r2 === 'hard') {
+              // Entrega indeterminada: pausa a IA da conversa (nenhum turno novo envia) e avisa.
+              const min = Math.round((this.now() - turnStartedAt) / 60000);
+              logger.error(`[turnos] Conversa ${conversationId}: envio travado há ${min} min; pausando a IA e liberando a fila`);
+              Promise.resolve()
+                .then(() => this.onLoop(conversationId, `envio da resposta travado há ${min} min`))
+                .catch((e: any) => logger.error(`[turnos] Erro ao pausar a conversa ${conversationId}: ${e?.message || e}`));
+              result = 'done';
+            } else {
+              result = r2;
+            }
           } else {
             // Ainda não enviou nada: cancela (não consegue mais enviar) e refaz o lote.
             logger.error(`[turnos] Conversa ${conversationId}: turno passou de ${cfg.turnDeadlineMs} ms sem enviar; cancelando e refazendo`);
@@ -365,6 +379,7 @@ export class TurnScheduler {
     const reason = kind === 'in'
       ? `${list.length} mensagens do cliente em ${Math.round(windowMs / 60000)} min`
       : `${list.length} respostas da IA em ${Math.round(windowMs / 60000)} min`;
+    const motivo = `possível loop: ${reason}`;
     logger.warn(`[turnos] Anti-loop na conversa ${conversationId}: ${reason}. Pausando a IA.`);
     st.loopUntil = at + cfg.cooldownMs;
     st.pending = [];
@@ -376,7 +391,7 @@ export class TurnScheduler {
     st.inTimes = [];
     st.outTimes = [];
     Promise.resolve()
-      .then(() => this.onLoop(conversationId, reason))
+      .then(() => this.onLoop(conversationId, motivo))
       .catch((e: any) => logger.error(`[turnos] Erro ao tratar anti-loop da conversa ${conversationId}: ${e?.message || e}`));
     return true;
   }
