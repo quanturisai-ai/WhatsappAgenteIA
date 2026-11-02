@@ -437,7 +437,14 @@ initDatabase()
         logger.warn('   Áudios serão salvos sem transcrição');
       }
     } else if (process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true') {
-      logger.info('🎙️ Transcrição de áudio via OpenRouter (%s)', process.env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/whisper-large-v3-turbo');
+      logger.info('🎙️ Transcrição de áudio via OpenRouter (%s)', process.env.OPENROUTER_TRANSCRIPTION_MODEL || 'modelo do painel / não configurado');
+    }
+
+    // Etapa 6 (AGENTE_MODELO_PAINEL): carrega o catálogo de modelos do OpenRouter em segundo plano.
+    if ((process.env.AGENTE_MODELO_PAINEL || 'off').trim().toLowerCase() !== 'off') {
+      import('./services/modelosOpenRouter')
+        .then((m) => m.garantirCatalogo({ esperaMs: 0 }))
+        .catch((err) => logger.warn(`[modelos] catálogo do OpenRouter indisponível no boot: ${err?.message || err}`));
     }
 
     // Inicializar sessões WhatsApp ativas ao iniciar o servidor
