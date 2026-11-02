@@ -42,6 +42,7 @@ export interface TopicoDados {
   title?: string | null;
   description?: string | null;
   trigger_keywords?: string[] | string | null;
+  context?: string | null;
   is_active?: boolean | number | null;
 }
 export interface MidiaDados {
@@ -69,10 +70,16 @@ export function parseAgenteYaml(text: string): AgenteYaml {
   if (!Array.isArray(doc.regras) || doc.regras.some((r: any) => !r || typeof r.id !== 'string' || typeof r.texto !== 'string')) erro('regras');
   const ids = doc.regras.map((r: any) => r.id);
   if (new Set(ids).size !== ids.length) erro('ids de regra repetidos');
-  if (!Array.isArray(doc.ferramentas) || doc.ferramentas.some((f: any) => !f || !f.nome || !f.comando || !f.descricao)) erro('ferramentas');
-  if (!doc.handoff || !Array.isArray(doc.handoff.quando)) erro('handoff');
+  const str = (v: any) => typeof v === 'string' && v.trim() !== '';
+  if (doc.regras.length === 0) erro('regras vazias');
+  if (!Array.isArray(doc.ferramentas) || doc.ferramentas.some((f: any) => !f || !str(f.nome) || !str(f.comando) || !str(f.descricao))) erro('ferramentas');
+  if (!doc.handoff || !Array.isArray(doc.handoff.quando) || doc.handoff.quando.length === 0 || doc.handoff.quando.some((q: any) => !str(q))) erro('handoff');
+  if (typeof doc.handoff.pausar_ia !== 'boolean') erro('handoff.pausar_ia');
   const c = doc.conhecimento;
   if (!c || c.fonte !== 'banco' || !Array.isArray(c.painel) || !Array.isArray(c.incluir_tipos)) erro('conhecimento');
+  if (c.painel.some((p: any) => !p || !str(p.campo) || !str(p.titulo))) erro('conhecimento.painel');
+  if (c.incluir_tipos.length === 0 || c.incluir_tipos.some((t: any) => t !== 'topic' && t !== 'media')) erro('conhecimento.incluir_tipos');
+  if (c.excluir_gatilhos !== undefined && (!Array.isArray(c.excluir_gatilhos) || c.excluir_gatilhos.some((g: any) => !str(g)))) erro('conhecimento.excluir_gatilhos');
   c.excluir_gatilhos = Array.isArray(c.excluir_gatilhos) ? c.excluir_gatilhos.map(String) : [];
   c.pular_vazios = c.pular_vazios !== false;
   return doc as AgenteYaml;
@@ -125,6 +132,11 @@ export interface SystemFixo {
   vaziosPulados: number[];
 }
 
+// Mesmos rótulos do prompt antigo (rag.service formatTopicForPrompt).
+const CONTEXTO_TOPICO: Record<string, string> = {
+  greeting: 'Saudação', farewell: 'Despedida', absence: 'Ausência', special_date: 'Data Especial', custom: 'Personalizado',
+};
+
 const TIPO_MIDIA: Record<string, string> = { image: 'imagem', video: 'vídeo', document: 'documento', audio: 'áudio' };
 
 /**
@@ -175,6 +187,7 @@ export function buildSystemFixo(
       }
       const kw = keywords(t);
       let bloco = `## Tópico ${t.id}: ${limpa(t.title)}`;
+      bloco += `\nContexto: ${CONTEXTO_TOPICO[t.context || ''] || limpa(t.context) || 'Personalizado'}`;
       if (kw.length) bloco += `\nSe o cliente disser: ${kw.map((k) => `"${k}"`).join(', ')} ou sinônimos.`;
       bloco += `\n${desc}`;
       linhas.push(bloco);

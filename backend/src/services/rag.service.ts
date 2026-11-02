@@ -540,10 +540,14 @@ export class RAGService {
       this.topicModel.findByUserId(userId),
       this.mediaModel.findByUserId(userId),
     ]);
-    const incluirReservados = batch.contatoiaAutorizado !== undefined
-      ? batch.contatoiaAutorizado === true
-      : /#contatoia/i.test(userMessage);
+    // Só autorização explícita de quem chama (ConversationService); sem ela, nunca inclui.
+    const incluirReservados = batch.contatoiaAutorizado === true;
     const sys = buildSystemFixo(cfg, painel as any, topicos as any, midias as any, { incluirReservados });
+    // Base grande demais para o contexto do modelo: volta ao prompt antigo (RAG) neste turno.
+    const maxChars = envInt('AGENTE_SYSTEM_MAX_CHARS', 120000, 1000);
+    if (sys.text.length > maxChars) {
+      throw new Error(`system do agente.yaml com ${sys.text.length} caracteres (limite AGENTE_SYSTEM_MAX_CHARS=${maxChars})`);
+    }
 
     let nome: string | null = null;
     let telefone: string | null = null;

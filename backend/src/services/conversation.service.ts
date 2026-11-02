@@ -265,9 +265,9 @@ export class ConversationService {
             {
               batchDbIds: turnMeta.batchDbIds,
               batchMessageIds: turnMeta.batchMessageIds,
-              // Item 4: instruções do #contatoia no system só para dono/atendente (ou, com
-              // CONTATOIA_RESTRICT=off, quando a mensagem traz o comando, como antes).
-              contatoiaAutorizado: senderAuthorized || (!restricted && hasContatoIA),
+              // Item 4: instruções do #contatoia no system só para dono/atendente, sempre
+              // (mesmo com CONTATOIA_RESTRICT=off; o caminho antigo, RAG_ENABLED=true, não usa isto).
+              contatoiaAutorizado: senderAuthorized,
             }
           ),
           new Promise<string>((_, reject) =>
