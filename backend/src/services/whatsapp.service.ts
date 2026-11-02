@@ -19,6 +19,7 @@ import { MessageSource } from '../types';
 import { OutgoingEchoRegistry, OutgoingIntent, echoTokenStore } from './outgoingEchoRegistry';
 import { antiLoopEnabled, deveDescreverMidia, echoBindingAppliesTo, echoBindingMode, envInt, turnSchedulerAppliesTo } from '../utils/agentFlags';
 import { descreverMidiaRecebida } from './midiaTurno';
+import { opcoesDescricaoChegada } from './modelosPainel';
 import { PendingItem, TurnResult, TurnScheduler, schedulerConfigFromEnv } from './turnScheduler';
 import { HumanAttendantService } from './humanAttendant.service';
 
@@ -2346,7 +2347,7 @@ export class WhatsAppService extends EventEmitter {
             // Transcrever áudio
             const { AudioTranscriptionService } = await import('./audioTranscription.service');
             const transcriptionService = new AudioTranscriptionService();
-            const result = await transcriptionService.transcribe(buffer, mediaDownload.mimetype || 'audio/ogg');
+            const result = await transcriptionService.transcribe(buffer, mediaDownload.mimetype || 'audio/ogg', { userId: this.userId, contato: contactNumber });
 
             if (result && result.text) {
               messageBody = result.text;
@@ -2455,7 +2456,7 @@ export class WhatsAppService extends EventEmitter {
         logger.info(`Mensagem salva no banco: ID=${savedMessage.id}, conversation_id=${conversation.id}, tipo=${messageType}, media_id=${incomingMediaId}, content="${bodyPreview}"`);
         // Item 5 (AGENTE_MULTIMODAL): descrição estruturada da foto/vídeo para o histórico, em segundo plano.
         if (incomingMediaId && savedMessage?.id && deveDescreverMidia(contactNumber)) {
-          void descreverMidiaRecebida(Number(savedMessage.id), Number(incomingMediaId));
+          void descreverMidiaRecebida(Number(savedMessage.id), Number(incomingMediaId), opcoesDescricaoChegada(this.userId, contactNumber));
         }
       } catch (error: any) {
         logger.error(`Erro ao salvar mensagem no banco: ${error.message}`);

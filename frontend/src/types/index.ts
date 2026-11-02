@@ -83,7 +83,11 @@ export interface AgentConfig {
   absenceMessage: string;
   specificInstructions: string;
   embeddingModel?: string; // Modelo para embeddings (ex: deepseek-r1)
-  generationModel?: string; // Modelo para geração de respostas (ex: qwen3:30b)
+  generationModel?: string; // Modelo para geração de respostas (vazio = padrão do .env)
+  visionModel?: string; // Etapa 6: descreve foto/vídeo que o modelo principal não entende (vazio = padrão do .env)
+  transcriptionModel?: string; // Etapa 6: transcreve áudio (vazio = padrão do .env)
+  /** Etapa 6: presente só com AGENTE_MODELO_PAINEL ligado no backend */
+  modelosPainel?: { ativo: boolean; padroes: { geracao: string; visao: string; transcricao: string } };
   temperature?: number; // Criatividade (0.0=preciso, 2.0=criativo) - padrão: 0.7
   topP?: number; // Nucleus sampling (0.0-1.0) - padrão: 0.9
   topK?: number; // Limita tokens considerados (1-100) - padrão: 40
@@ -157,3 +161,15 @@ export interface AttendantAlert {
   resolvedAt?: string | null;
 }
 
+
+/** Etapa 6: modelo do catálogo do OpenRouter (GET /api/agent-config/modelos) */
+export interface ModeloCatalogo {
+  id: string;
+  nome: string;
+  entrada: string[];
+  saida: string[];
+  tools: boolean | null;
+  raciocinioObrigatorio: boolean;
+  precoMilhao: { entrada?: number; saida?: number };
+  contexto: number | null;
+}

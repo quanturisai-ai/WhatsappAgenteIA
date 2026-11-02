@@ -1,5 +1,8 @@
 import axios from 'axios';
 import logger from '../utils/logger';
+import { modeloPainelAppliesTo, multimodalDataCollection } from '../utils/agentFlags';
+import { aceita, capacidades, ehTranscricao } from './modelosOpenRouter';
+import { modelosDoUsuario } from './modelosPainel';
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 const DEFAULT_TIMEOUT_MS = 60000; // OpenRouter pode levar mais que o serviço local
@@ -33,7 +36,8 @@ export class AudioTranscriptionService {
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
     this.baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
-    this.model = process.env.OPENROUTER_TRANSCRIPTION_MODEL || 'openai/whisper-large-v3-turbo';
+    // Etapa 6 (regra do dono): nenhum modelo fixo no código; vazio = transcrição indisponível (avisa no log).
+    this.model = (process.env.OPENROUTER_TRANSCRIPTION_MODEL || '').trim();
     this.language = process.env.WHISPER_LANGUAGE || 'pt';
     this.timeoutMs = parseInt(process.env.AUDIO_TRANSCRIPTION_TIMEOUT_MS || String(DEFAULT_TIMEOUT_MS), 10) || DEFAULT_TIMEOUT_MS;
     this.enabled = process.env.AUDIO_TRANSCRIPTION_ENABLED === 'true';
@@ -43,7 +47,11 @@ export class AudioTranscriptionService {
    * Transcreve um buffer de áudio usando OpenRouter STT.
    * Retorna null se transcrição desabilitada, falhar ou timeout.
    */
-  async transcribe(buffer: Buffer, mimetype: string): Promise<TranscriptionResult | null> {
+  async transcribe(
+    buffer: Buffer,
+    mimetype: string,
+    origem: { userId?: number | null; contato?: string | null } = {}
+  ): Promise<TranscriptionResult | null> {
     if (!this.enabled) {
       logger.info('Transcrição de áudio desabilitada (AUDIO_TRANSCRIPTION_ENABLED != true).');
       return null;
@@ -59,12 +67,35 @@ export class AudioTranscriptionService {
       return null;
     }
 
+    // Etapa 6 (AGENTE_MODELO_PAINEL): modelo do painel (transcription_model; vazio = .env) e rota pelo
+    // catálogo do OpenRouter; o áudio vai com data_collection=deny. Flag desligada: como antes.
+    let modelo = this.model;
+    let rota: 'chat' | 'stt' = !/whisper|transcri/i.test(modelo) ? 'chat' : 'stt';
+    const painel = !!origem.contato && modeloPainelAppliesTo(origem.contato);
+    if (painel) {
+      if (Number(origem.userId) > 0) modelo = (await modelosDoUsuario(Number(origem.userId))).transcricao || modelo;
+      if (modelo) {
+        const cap = await capacidades(modelo);
+        if (ehTranscricao(cap) === true) rota = 'stt';
+        else if (aceita(cap, 'audio') === true) rota = 'chat';
+        else if (cap.conhecido) {
+          logger.warn(`Modelo de transcrição '${modelo}' não aceita áudio (catálogo do OpenRouter): escolha outro no painel.`);
+          return null;
+        } else rota = !/whisper|transcri/i.test(modelo) ? 'chat' : 'stt';
+      }
+    }
+    if (!modelo) {
+      logger.warn('Nenhum modelo de transcrição configurado (painel ou OPENROUTER_TRANSCRIPTION_MODEL).');
+      return null;
+    }
+    const provider = painel ? { provider: { data_collection: multimodalDataCollection() } } : {};
+
     const format = mimetypeToFormat(mimetype);
     const base64Audio = buffer.toString('base64');
 
     logger.info(
       'Transcrevendo áudio via OpenRouter (%s) | formato=%s | tamanho=%d bytes',
-      this.model,
+      modelo,
       format,
       buffer.length,
     );
@@ -75,12 +106,13 @@ export class AudioTranscriptionService {
         // Modelos de STT (whisper/transcribe) usam /audio/transcriptions; os demais (ex.: Gemini)
         // recebem o áudio no chat. Teste de 27/10 (n=3): Gemini 2.5 Flash Lite transcreveu certo,
         // o whisper-large-v3-turbo acrescentou um "Obrigado" que não foi dito.
-        const viaChat = !/whisper|transcri/i.test(this.model);
+        const viaChat = rota === 'chat';
         const { data: resposta } = await axios.post<any>(
           viaChat ? `${this.baseUrl}/chat/completions` : `${this.baseUrl}/audio/transcriptions`,
           viaChat
             ? {
-                model: this.model,
+                model: modelo,
+                ...provider,
                 temperature: 0,
                 max_tokens: 2000,
                 messages: [{
@@ -92,7 +124,8 @@ export class AudioTranscriptionService {
                 }],
               }
             : {
-                model: this.model,
+                model: modelo,
+                ...provider,
                 input_audio: {
                   data: base64Audio,
                   format,

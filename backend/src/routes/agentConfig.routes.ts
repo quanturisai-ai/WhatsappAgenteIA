@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAgentConfig, updateAgentConfig } from '../controllers/agentConfig.controller';
+import { getAgentConfig, listarModelosCatalogo, updateAgentConfig } from '../controllers/agentConfig.controller';
 import { authenticateToken } from '../middleware/auth';
 
 const router = Router();
@@ -8,6 +8,7 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get('/', getAgentConfig);
+router.get('/modelos', listarModelosCatalogo); // etapa 6: catálogo do OpenRouter (capacidades e preço)
 router.put('/', updateAgentConfig);
 router.post('/', updateAgentConfig); // POST também aceito para compatibilidade
 

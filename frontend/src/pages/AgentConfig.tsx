@@ -4,7 +4,7 @@ import { agentConfigService } from '../services/agentConfig.service';
 import { topicService } from '../services/topic.service';
 import { indexingService, IndexableContent, IndexingStats } from '../services/indexing.service';
 import { ollamaService } from '../services/ollama.service';
-import { AgentConfig as AgentConfigType, Topic, Document, Media, OllamaModel } from '../types';
+import { AgentConfig as AgentConfigType, Topic, Document, Media, OllamaModel, ModeloCatalogo } from '../types';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { 
@@ -60,8 +60,8 @@ export const AgentConfig = () => {
     farewellMessage: '',
     absenceMessage: '',
     specificInstructions: '',
-    embeddingModel: 'deepseek-r1',
-    generationModel: 'deepseek-r1',
+    embeddingModel: '',
+    generationModel: '',
     temperature: 0.7,
     topP: 0.9,
     topK: 40,
@@ -74,6 +74,8 @@ export const AgentConfig = () => {
   // Estados para modelos do Ollama
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  // Etapa 6: catálogo do OpenRouter (só com AGENTE_MODELO_PAINEL ligado no backend)
+  const [catalogo, setCatalogo] = useState<ModeloCatalogo[]>([]);
 
   // Estados para Tópicos
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -208,14 +210,18 @@ export const AgentConfig = () => {
           farewellMessage: data.farewellMessage ?? '',
           absenceMessage: data.absenceMessage ?? '',
           specificInstructions: data.specificInstructions ?? '',
-          embeddingModel: data.embeddingModel ?? 'deepseek-r1',
-          generationModel: data.generationModel ?? 'deepseek-r1',
+          embeddingModel: data.embeddingModel ?? '',
+          generationModel: data.generationModel ?? '',
+          visionModel: data.visionModel ?? '',
+          transcriptionModel: data.transcriptionModel ?? '',
+          modelosPainel: data.modelosPainel,
           temperature: data.temperature ?? 0.7,
           topP: data.topP ?? 0.9,
           topK: data.topK ?? 40,
           repeatPenalty: data.repeatPenalty ?? 1.1,
           maxAgeHours: (data as any).max_age_hours ?? (data as any).maxAgeHours ?? 12,
         });
+        if (data.modelosPainel?.ativo) loadCatalogo();
       }
     } catch (error: any) {
       toast.error('Erro ao carregar configurações');
@@ -230,8 +236,12 @@ export const AgentConfig = () => {
     setIsSaving(true);
 
     try {
-      await agentConfigService.updateConfig(config);
+      const { modelosPainel: _mp, ...envio } = config;
+      const salvo = await agentConfigService.updateConfig(envio);
       toast.success('Configurações salvas com sucesso!');
+      // Etapa 6: o que os modelos escolhidos não fazem (catálogo do OpenRouter, atualizado ao salvar)
+      for (const aviso of salvo.avisos || []) toast(aviso, { icon: '⚠️', duration: 8000 });
+      if (config.modelosPainel?.ativo) loadCatalogo();
     } catch (error: any) {
       toast.error('Erro ao salvar configurações');
       console.error(error);
@@ -256,6 +266,41 @@ export const AgentConfig = () => {
     } finally {
       setModelsLoading(false);
     }
+  };
+
+  const loadCatalogo = async (atualizar = false) => {
+    try {
+      setCatalogo(await agentConfigService.listarModelos(atualizar));
+    } catch (error: any) {
+      console.error('Erro ao carregar o catálogo de modelos:', error);
+    }
+  };
+
+  /** Etapa 6: "aceita texto, foto, vídeo · ferramentas · US$ 0,05 / 0,50 por milhão" */
+  const resumoModelo = (id: string | undefined, padrao?: string) => {
+    const alvo = (id || '').trim() || (padrao || '').trim();
+    if (!alvo) return 'nenhum modelo (configure no .env ou escolha aqui)';
+    const m = catalogo.find((x) => x.id === alvo);
+    if (!m) return catalogo.length ? `${alvo}: fora do catálogo do OpenRouter` : alvo;
+    const nomes: Record<string, string> = { text: 'texto', image: 'foto', video: 'vídeo', audio: 'áudio', file: 'arquivo' };
+    const aceita = m.entrada.map((e) => nomes[e] || e).join(', ');
+    const fmt = (v?: number) => (v === undefined ? '?' : v.toLocaleString('pt-BR', { maximumFractionDigits: 4 }));
+    const partes = [`aceita ${aceita || '?'}`];
+    if (m.saida.includes('transcription')) partes.push('transcrição');
+    if (m.tools === true) partes.push('ferramentas');
+    if (m.tools === false) partes.push('sem ferramentas');
+    if (m.raciocinioObrigatorio) partes.push('raciocínio obrigatório');
+    partes.push(`US$ ${fmt(m.precoMilhao.entrada)} / ${fmt(m.precoMilhao.saida)} por milhão (entrada/saída)`);
+    return `${alvo === (id || '').trim() ? '' : `${alvo} (padrão): `}${partes.join(' · ')}`;
+  };
+
+  const opcoesModelo = (filtro: (m: ModeloCatalogo) => boolean, atual?: string) => {
+    const lista = catalogo.filter(filtro);
+    const v = (atual || '').trim();
+    if (v && !lista.some((m) => m.id === v)) lista.unshift({ id: v, nome: v, entrada: [], saida: [], tools: null, raciocinioObrigatorio: false, precoMilhao: {}, contexto: null });
+    return lista.map((m) => (
+      <option key={m.id} value={m.id}>{m.id}</option>
+    ));
   };
 
   // ========== FUNÇÕES DE TÓPICOS ==========
@@ -1306,7 +1351,7 @@ export const AgentConfig = () => {
                   </label>
                   <select
                     id="embeddingModel"
-                    value={config.embeddingModel || 'deepseek-r1'}
+                    value={config.embeddingModel || ''}
                     onChange={(e) => handleChange('embeddingModel', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                     disabled={modelsLoading}
@@ -1334,11 +1379,14 @@ export const AgentConfig = () => {
                   </label>
                   <select
                     id="generationModel"
-                    value={config.generationModel || 'deepseek-r1'}
+                    value={config.generationModel || ''}
                     onChange={(e) => handleChange('generationModel', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                     disabled={modelsLoading}
                   >
+                    {config.modelosPainel?.ativo && (
+                      <option value="">Padrão do .env ({config.modelosPainel.padroes.geracao || 'vazio'})</option>
+                    )}
                     {modelsLoading ? (
                       <option>Carregando modelos...</option>
                     ) : ollamaModels.length === 0 ? (
@@ -1354,13 +1402,58 @@ export const AgentConfig = () => {
                   <p className="mt-1 text-xs text-gray-500">
                     Modelo usado para gerar respostas ao cliente
                   </p>
+                  {config.modelosPainel?.ativo && (
+                    <p className="mt-1 text-xs text-gray-600">{resumoModelo(config.generationModel, config.modelosPainel.padroes.geracao)}</p>
+                  )}
                 </div>
               </div>
+
+              {config.modelosPainel?.ativo && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="visionModel" className="block text-sm font-medium text-gray-700 mb-1">
+                      Modelo para foto/vídeo que o modelo principal não entende
+                    </label>
+                    <select
+                      id="visionModel"
+                      value={config.visionModel || ''}
+                      onChange={(e) => handleChange('visionModel', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">Padrão do .env ({config.modelosPainel.padroes.visao || 'vazio'})</option>
+                      {opcoesModelo((m) => m.entrada.includes('image') || m.entrada.includes('video'), config.visionModel)}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Descreve a foto/vídeo em texto para o modelo principal. Se nenhum dos dois abrir a mídia, o atendente é chamado.
+                    </p>
+                    <p className="mt-1 text-xs text-gray-600">{resumoModelo(config.visionModel, config.modelosPainel.padroes.visao)}</p>
+                  </div>
+
+                  <div>
+                    <label htmlFor="transcriptionModel" className="block text-sm font-medium text-gray-700 mb-1">
+                      Modelo de transcrição de áudio
+                    </label>
+                    <select
+                      id="transcriptionModel"
+                      value={config.transcriptionModel || ''}
+                      onChange={(e) => handleChange('transcriptionModel', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">Padrão do .env ({config.modelosPainel.padroes.transcricao || 'vazio'})</option>
+                      {opcoesModelo((m) => m.saida.includes('transcription') || m.entrada.includes('audio'), config.transcriptionModel)}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Transforma o áudio do cliente em texto.
+                    </p>
+                    <p className="mt-1 text-xs text-gray-600">{resumoModelo(config.transcriptionModel, config.modelosPainel.padroes.transcricao)}</p>
+                  </div>
+                </div>
+              )}
               
               <div className="flex items-center gap-2 mt-2">
                 <button
                   type="button"
-                  onClick={loadOllamaModels}
+                  onClick={() => { loadOllamaModels(); if (config.modelosPainel?.ativo) loadCatalogo(true); }}
                   disabled={modelsLoading}
                   className="flex items-center gap-2 px-3 py-1.5 text-sm text-primary-600 hover:text-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
