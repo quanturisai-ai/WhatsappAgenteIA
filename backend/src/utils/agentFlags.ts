@@ -142,8 +142,10 @@ export function agenteYamlAppliesTo(contactNumber: string | null | undefined): b
  * OPENROUTER_PAYLOAD (item 4): v1 (padrão, antigo) | v2 = JSON nas boas práticas: session_id por
  * conversa, sem usage.include (obsoleto), sem top_k/repetition_penalty, max_tokens por env.
  */
-export function openrouterPayloadV2(): boolean {
-  return (process.env.OPENROUTER_PAYLOAD || 'v1').trim().toLowerCase() === 'v2';
+export function openrouterPayloadV2(agenteYaml = false): boolean {
+  const v = (process.env.OPENROUTER_PAYLOAD || 'v1').trim().toLowerCase();
+  // yaml = v2 só nos turnos do agente.yaml (acompanha RAG_ENABLED=test/false); os demais seguem no v1.
+  return v === 'v2' || (v === 'yaml' && agenteYaml);
 }
 
 function envNum(name: string): number | undefined {

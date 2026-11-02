@@ -195,7 +195,7 @@ export class OpenRouterService {
       top_k?: number;
       repeat_penalty?: number;
     },
-    extra?: { sessionId?: string },
+    extra?: { sessionId?: string; agenteYaml?: boolean },
   ): Promise<string> {
     const generationModel = model || this.defaultGenerationModel;
     try {
@@ -204,7 +204,7 @@ export class OpenRouterService {
         ? prompt.map((m) => ({ role: m.role, content: m.content }))
         : [{ role: 'user', content: context ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:` : prompt }];
 
-      const v2 = openrouterPayloadV2();
+      const v2 = openrouterPayloadV2(extra?.agenteYaml === true);
       const body: any = v2
         ? buildPayloadV2(generationModel, messages, options, extra)
         : buildPayloadV1(generationModel, messages, options);

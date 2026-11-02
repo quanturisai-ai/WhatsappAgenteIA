@@ -1004,8 +1004,10 @@ export class RAGService {
   }
 
   /** Item 4: session_id por conversa (só vai no payload com OPENROUTER_PAYLOAD=v2). */
-  private llmExtra(conversationId: number): { sessionId?: string } {
-    return conversationId > 0 ? { sessionId: `conv-${conversationId}` } : {};
+  private llmExtra(conversationId: number, agenteYaml = false): { sessionId?: string; agenteYaml?: boolean } {
+    const extra: { sessionId?: string; agenteYaml?: boolean } = conversationId > 0 ? { sessionId: `conv-${conversationId}` } : {};
+    if (agenteYaml) extra.agenteYaml = true;
+    return extra;
   }
 
   /**
@@ -1077,7 +1079,7 @@ export class RAGService {
         const ctx = currentTurn();
         if (ctx) ctx.meta.prompt = 'rag';
       }
-      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions, this.llmExtra(conversationId));
+      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions, this.llmExtra(conversationId, !!yaml));
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
       if (conversationId === 0) {

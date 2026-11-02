@@ -321,3 +321,19 @@ test('system acima de AGENTE_SYSTEM_MAX_CHARS: volta ao prompt antigo (RAG) no t
     assert.ok(h.entradas.length > 0, 'respondeu');
   } finally { delete process.env.AGENTE_SYSTEM_MAX_CHARS; }
 });
+
+test('OPENROUTER_PAYLOAD=yaml: v2 só nos turnos do agente.yaml', async () => {
+  const { openrouterPayloadV2 } = require('../src/utils/agentFlags');
+  process.env.OPENROUTER_PAYLOAD = 'yaml';
+  try {
+    assert.equal(openrouterPayloadV2(true), true);
+    assert.equal(openrouterPayloadV2(false), false);
+    process.env.RAG_ENABLED = 'test';
+    const t = criar(FONE_TESTE); await t.svc.processMessageAndRespond(1, 7, 'Oi', true, true, IDS);
+    const c = criar(FONE_CLIENTE); await c.svc.processMessageAndRespond(1, 8, 'Oi', true, true, IDS);
+    assert.equal(t.extras[0]?.agenteYaml, true);
+    assert.ok(!c.extras[0]?.agenteYaml);
+    process.env.OPENROUTER_PAYLOAD = 'v1';
+    assert.equal(openrouterPayloadV2(true), false, 'v1 = antigo sempre');
+  } finally { delete process.env.OPENROUTER_PAYLOAD; }
+});
