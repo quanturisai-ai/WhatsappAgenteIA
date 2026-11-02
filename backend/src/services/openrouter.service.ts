@@ -196,19 +196,55 @@ export class OpenRouterService {
       top_k?: number;
       repeat_penalty?: number;
     },
-    extra?: { sessionId?: string; agenteYaml?: boolean; dataCollection?: 'deny' | 'allow'; temMidia?: boolean },
+    extra?: GenExtra,
   ): Promise<string> {
+    const r = await this.chatCall(prompt, context, model, options, extra);
+    return r.content as string;
+  }
+
+  /**
+   * Item 6 (AGENTE_TOOLS): uma chamada com `tools` (function calling). Devolve o texto (pode vir vazio)
+   * e as chamadas de ferramenta pedidas. Só no payload v2 (turnos do agente.yaml).
+   */
+  async generateWithTools(
+    messages: Array<{ role: string; content: any; tool_calls?: any[]; tool_call_id?: string }>,
+    model: string | undefined,
+    options: GenOptions,
+    extra: GenExtra | undefined,
+    tools: any[],
+  ): Promise<{ content: string | null; toolCalls: any[] }> {
+    return this.chatCall(messages as any, undefined, model, options, extra, tools);
+  }
+
+  private async chatCall(
+    prompt: string | Array<{ role: string; content: any; tool_calls?: any[]; tool_call_id?: string }>,
+    context: string | undefined,
+    model: string | undefined,
+    options: GenOptions,
+    extra: GenExtra | undefined,
+    tools?: any[],
+  ): Promise<{ content: string | null; toolCalls: any[] }> {
     const generationModel = model || this.defaultGenerationModel;
     try {
       // Item 3: lista de mensagens (system + histórico user/assistant + atual) vai como está.
       const messages = Array.isArray(prompt)
-        ? prompt.map((m) => ({ role: m.role, content: m.content }))
+        ? prompt.map((m: any) => {
+          // Item 6: mensagens do loop de ferramentas (assistant com tool_calls, role tool) passam inteiras.
+          const out: any = { role: m.role, content: m.content };
+          if (m.tool_calls) out.tool_calls = m.tool_calls;
+          if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
+          return out;
+        })
         : [{ role: 'user', content: context ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:` : prompt }];
 
       const v2 = openrouterPayloadV2(extra?.agenteYaml === true);
       const body: any = v2
         ? buildPayloadV2(generationModel, messages, options, extra)
         : buildPayloadV1(generationModel, messages, options);
+      if (tools && tools.length) {
+        body.tools = tools;
+        body.tool_choice = 'auto';
+      }
       // Item 5 (AGENTE_MULTIMODAL): política de privacidade no roteamento (só no caminho multimodal).
       if (extra?.dataCollection) body.provider = { ...(body.provider || {}), data_collection: extra.dataCollection };
       const ctxTurn = currentTurn();
@@ -248,17 +284,20 @@ export class OpenRouterService {
       const elapsed = Date.now() - t0;
       logger.debug(`[OpenRouter] Resposta recebida em ${elapsed}ms`);
 
-      const content = response.data?.choices?.[0]?.message?.content;
+      const message = response.data?.choices?.[0]?.message;
+      const content = message?.content;
+      const toolCalls: any[] = tools && Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+      const temTexto = typeof content === 'string' && content.length > 0;
       recordLlmCall({
         kind: 'chat',
         model: response.data?.model || generationModel,
         provider: response.data?.provider ?? null,
         ms: elapsed,
-        ok: typeof content === 'string' && content.length > 0,
+        ok: temTexto || toolCalls.length > 0,
         ...usageFields(response.data?.usage),
       });
-      if (typeof content === 'string' && content.length > 0) {
-        return content;
+      if (temTexto || toolCalls.length > 0) {
+        return { content: temTexto ? content : null, toolCalls };
       }
 
       throw new Error('Resposta do OpenRouter não contém texto');
@@ -304,8 +343,9 @@ export class OpenRouterService {
   }
 }
 
-type ChatMsg = { role: string; content: string | any[] };
+type ChatMsg = { role: string; content: string | any[] | null; tool_calls?: any[]; tool_call_id?: string };
 type GenOptions = { temperature?: number; top_p?: number; top_k?: number; repeat_penalty?: number } | undefined;
+export type GenExtra = { sessionId?: string; agenteYaml?: boolean; dataCollection?: 'deny' | 'allow'; temMidia?: boolean };
 
 const num = (v: any): number => (typeof v === 'string' ? parseFloat(v) : Number(v));
 
