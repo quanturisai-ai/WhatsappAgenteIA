@@ -16,6 +16,8 @@ import { emitConversationUpdated, emitConversationNew } from '../utils/conversat
 // WhatsAppSession type is used in model, not directly imported
 import { ConversationService } from './conversation.service';
 import { MessageSource } from '../types';
+import { OutgoingEchoRegistry, OutgoingIntent } from './outgoingEchoRegistry';
+import { echoBindingAppliesTo, echoBindingMode } from '../utils/agentFlags';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
 import { setupPuppeteerCache, detectChrome } from '../utils/puppeteer.util';
@@ -57,6 +59,11 @@ export class WhatsAppService extends EventEmitter {
   private pendingSources: Map<string, MessageSource> = new Map();
   // Map para rastrear media_id de mensagens de mídia: message_id -> media_id
   private pendingMediaIds: Map<string, number> = new Map();
+  // Item 0 (OUTGOING_ECHO_BINDING): envio registra conversa + source antes de sair; o eco
+  // message_create consome o registro em vez de resolver a conversa de novo pelo contato.
+  private outgoingRegistry = new OutgoingEchoRegistry();
+  // Ecos em processamento (por message_id), para o mesmo eco simultâneo não gravar duas vezes.
+  private outgoingInFlight: Set<string> = new Set();
   // Interval para keep-alive -manter sessão ativa
   private keepAliveInterval: NodeJS.Timeout | null = null;
   // Flag para evitar processamento duplicado do evento 'ready'
@@ -2538,9 +2545,40 @@ export class WhatsAppService extends EventEmitter {
   }
 
   private async handleOutgoingMessage(msg: Message): Promise<void> {
+    // Item 0: consumir o registro do envio antes de qualquer await (o eco do SyncZap é emitido
+    // de dentro do sendMessage). Sem registro (ex.: digitado no celular) segue o caminho antigo.
+    const intent: OutgoingIntent | null = this.outgoingRegistry.size() > 0
+      ? this.outgoingRegistry.take(msg as any)
+      : null;
+    const inFlightKey = echoBindingMode() !== 'off' ? (msg.id?._serialized || '') : '';
+    if (inFlightKey) {
+      if (this.outgoingInFlight.has(inFlightKey)) {
+        logger.debug(`Eco repetido em processamento ignorado: message_id=${inFlightKey}`);
+        return;
+      }
+      this.outgoingInFlight.add(inFlightKey);
+    }
     try {
+      let contactNumber = '';
+      let contactName = '';
+      let lid: string | null | undefined = null;
+      let conversation: any = null;
+
+      if (intent?.conversationId) {
+        const bound = await this.conversationModel.findById(intent.conversationId);
+        if (bound && Number(bound.user_id) === Number(this.userId)) {
+          conversation = bound;
+          contactNumber = bound.contact_number;
+          contactName = bound.contact_name || bound.contact_number;
+          logger.debug(`Eco casado pelo registro de envio: message_id=${msg.id?._serialized}, conversation_id=${bound.id}, source=${intent.source}`);
+        } else {
+          logger.warn(`Registro de envio aponta para conversa ${intent.conversationId} inexistente/de outro usuário; resolvendo pelo contato`);
+        }
+      }
+
+      if (!conversation) {
       // Extrair número e nome do contato de forma inteligente (lidando com @lid)
-      const { contactNumber, contactName, lid } = await this.getContactInfo(msg);
+      ({ contactNumber, contactName, lid } = await this.getContactInfo(msg));
 
       if (!contactNumber) {
         logger.warn('Não foi possível extrair número do contato da mensagem enviada');
@@ -2550,7 +2588,7 @@ export class WhatsAppService extends EventEmitter {
       logger.debug(`Processando mensagem enviada para ${contactNumber}`);
 
       // Buscar conversa
-      let conversation = await this.conversationModel.findByUserOrLid(
+      conversation = await this.conversationModel.findByUserOrLid(
         this.userId,
         contactNumber,
         lid
@@ -2576,6 +2614,7 @@ export class WhatsAppService extends EventEmitter {
       } else if (lid && !conversation.lid) {
         // Se a conversa existe mas não tem LID, atualizar
         await this.conversationModel.update(conversation.id, { lid: lid });
+      }
       }
 
       // Extrair conteúdo da mensagem antes de verificar duplicatas
@@ -2626,6 +2665,18 @@ export class WhatsAppService extends EventEmitter {
             this.pendingAIMessages.delete(msg.id._serialized);
           } catch (error: any) {
             logger.error(`Erro ao atualizar mensagem: ${error.message}`);
+          }
+        }
+
+        if (intent && !existingMessage.source) {
+          try {
+            await this.messageModel.update(existingMessage.id, {
+              source: intent.source,
+              ...(intent.isFromAI && !existingMessage.is_from_ai ? { is_from_ai: true } : {}),
+            });
+            existingMessage.source = intent.source;
+          } catch (error: any) {
+            logger.error(`Erro ao atualizar source pelo registro de envio: ${error.message}`);
           }
         }
 
@@ -2768,6 +2819,12 @@ export class WhatsAppService extends EventEmitter {
         }
       }
 
+      // Registro do envio (item 0) tem prioridade: é a origem declarada por quem enviou.
+      if (intent) {
+        resolvedSource = intent.source;
+        isFromAI = intent.isFromAI || intent.source === 'ai';
+      }
+
       // Fallback: sem rastreamento explícito, é humano (atendente digitando direto no
       // WhatsApp/celular) — a menos que isFromAI já tenha identificado como IA pelo caminho legado.
       const source: MessageSource = resolvedSource ?? (isFromAI ? 'ai' : 'human');
@@ -2824,6 +2881,10 @@ export class WhatsAppService extends EventEmitter {
             }
           }
         }
+      }
+
+      if (intent?.mediaId && messageType === 'media') {
+        mediaId = intent.mediaId;
       }
 
       // Salvar mensagem no banco
@@ -2978,6 +3039,8 @@ export class WhatsAppService extends EventEmitter {
       logger.info(`Mensagem enviada para ${contactNumber}: "${msg.body.substring(0, 50)}..."`);
     } catch (error: any) {
       logger.error(`Erro ao processar mensagem enviada: ${error.message}`);
+    } finally {
+      if (inFlightKey) this.outgoingInFlight.delete(inFlightKey);
     }
   }
 
@@ -2987,7 +3050,8 @@ export class WhatsAppService extends EventEmitter {
     isFromAI: boolean = false,
     _isRetryAfterHeal: boolean = false,
     lid?: string | null,
-    source: MessageSource = isFromAI ? 'ai' : 'human'
+    source: MessageSource = isFromAI ? 'ai' : 'human',
+    opts: { conversationId?: number | null } = {}
   ): Promise<Message> {
     if (!this.client) {
       logger.error('Tentativa de enviar mensagem falhou: cliente não existe.');
@@ -3017,7 +3081,7 @@ export class WhatsAppService extends EventEmitter {
         if (!_isRetryAfterHeal && this.isFatalPuppeteerError(error)) {
           try {
             await this.selfHeal(error.message);
-            return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source);
+            return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source, opts);
           } catch (healError: any) {
             logger.error(`[SelfHeal] Reparo falhou ao verificar estado para ${contactNumber}: ${healError.message}`);
             throw new Error('WhatsApp cliente não está pronto e verificação de estado falhou');
@@ -3083,7 +3147,24 @@ export class WhatsAppService extends EventEmitter {
         logger.debug(`Enviando mensagem para: ${chatId} (original: ${contactNumber})`);
       }
 
-      const message = await this.client.sendMessage(chatId, content, { sendSeen: false });
+      // Item 0: registrar conversa + source ANTES do envio (o eco pode chegar antes do retorno).
+      let echoToken: string | null = null;
+      if (echoBindingAppliesTo(contactNumber)) {
+        echoToken = this.outgoingRegistry.register(chatId, content, false, {
+          conversationId: opts.conversationId ?? null,
+          source,
+          isFromAI,
+        });
+      }
+
+      let message: Message;
+      try {
+        message = await this.client.sendMessage(chatId, content, { sendSeen: false });
+      } catch (sendError) {
+        if (echoToken) this.outgoingRegistry.release(echoToken);
+        throw sendError;
+      }
+      if (echoToken) this.outgoingRegistry.bindMessageId(echoToken, message?.id?._serialized);
 
       if (!message) {
         logger.warn(`sendMessage: client.sendMessage() retornou vazio para ${contactNumber} (chatId=${chatId}). A entrega pode ter ocorrido, mas não há objeto de mensagem para rastrear.`);
@@ -3134,7 +3215,7 @@ export class WhatsAppService extends EventEmitter {
       if (!_isRetryAfterHeal && this.isFatalPuppeteerError(error)) {
         try {
           await this.selfHeal(error.message);
-          return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source);
+          return await this.sendMessage(contactNumber, content, isFromAI, true, lid, source, opts);
         } catch (healError: any) {
           logger.error(`[SelfHeal] Reparo ou reenvio falharam para ${contactNumber}: ${healError.message}`);
           throw healError;
@@ -3156,7 +3237,8 @@ export class WhatsAppService extends EventEmitter {
     mediaId?: number,
     retryCount: number = 0,
     lid?: string | null,
-    source: MessageSource = isFromAI ? 'ai' : 'human'
+    source: MessageSource = isFromAI ? 'ai' : 'human',
+    opts: { conversationId?: number | null } = {}
   ): Promise<Message> {
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 2000; // 2 segundos
@@ -3210,8 +3292,27 @@ export class WhatsAppService extends EventEmitter {
       // Criar MessageMedia a partir do arquivo
       const media = MessageMedia.fromFilePath(filePath);
 
+      // Item 0: registrar conversa + source + media_id ANTES do envio (cobre mídia sem legenda,
+      // que antes não era rastreada e virava source=human, pausando a IA).
+      let echoToken: string | null = null;
+      if (echoBindingAppliesTo(contactNumber)) {
+        echoToken = this.outgoingRegistry.register(chatId, caption || '', true, {
+          conversationId: opts.conversationId ?? null,
+          source,
+          isFromAI,
+          mediaId: mediaId ?? null,
+        });
+      }
+
       // Enviar mídia com caption opcional
-      const message = await this.client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false });
+      let message: Message;
+      try {
+        message = await this.client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false });
+      } catch (sendError) {
+        if (echoToken) this.outgoingRegistry.release(echoToken);
+        throw sendError;
+      }
+      if (echoToken) this.outgoingRegistry.bindMessageId(echoToken, message?.id?._serialized);
 
       // Se a mídia foi rastreada (IA ou automação), atualizar o Map com o message_id real
       if ((isFromAI || source !== 'human') && message.id) {
@@ -3316,7 +3417,7 @@ export class WhatsAppService extends EventEmitter {
         }
 
         // Tentar novamente
-        return this.sendMedia(contactNumber, filePath, caption, isFromAI, mediaId, retryCount + 1, lid, source);
+        return this.sendMedia(contactNumber, filePath, caption, isFromAI, mediaId, retryCount + 1, lid, source, opts);
       }
 
       // Limpar hash temporário em caso de erro definitivo

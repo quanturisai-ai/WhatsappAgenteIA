@@ -558,7 +558,7 @@ export const sendMessage = async (
     // Enviar mensagem via WhatsApp
     // O service.sendMessage tem lógica de self-healing para verificar estado real
     try {
-      await whatsappService.sendMessage(conversation.contact_number, content, false, false, conversation.lid, messageSource);
+      await whatsappService.sendMessage(conversation.contact_number, content, false, false, conversation.lid, messageSource, { conversationId: conversation.id });
     } catch (sendError: any) {
       logger.error(`[sendMessage] Erro ao enviar: ${sendError.message}`);
 
@@ -630,7 +630,7 @@ export const sendMedia = async (
     // Enviar mídia com caption cadastrado
     // isFromAI = false porque é o usuário que está enviando manualmente
     const caption = media.caption && media.caption.trim() ? media.caption.trim() : undefined;
-    await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, false, mediaId, 0, undefined, 'human');
+    await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, false, mediaId, 0, undefined, 'human', { conversationId: conversation.id });
 
     res.json({
       message: 'Mídia enviada com sucesso',

@@ -271,7 +271,7 @@ export class ConversationService {
               // Se houver múltiplas mídias, usar a mesma resposta para todas
               const caption = cleanedResponse.trim() || undefined;
               
-              await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId, 0, conversation.lid, 'ai');
+              await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId, 0, conversation.lid, 'ai', { conversationId });
               
               // Registrar que a mídia foi enviada (para estatísticas, mas não bloqueia reenvio)
               await this.mediaSentTrackingModel.markMediaAsSent(conversationId, mediaId);
@@ -295,12 +295,12 @@ export class ConversationService {
           // Nenhuma mídia foi enviada (todas falharam ou não foram encontradas)
           // Enviar a mensagem de texto normalmente para o cliente não ficar sem resposta
           logger.warn(`Nenhuma mídia foi enviada com sucesso - enviando resposta da IA como mensagem de texto`);
-          await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai');
+          await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId });
         }
       } else {
         // Se não houver mídias, enviar resposta via WhatsApp normalmente
         // Não salvar manualmente aqui - o handleOutgoingMessage vai salvar automaticamente
-        await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai');
+        await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId });
       }
 
       // Só marcar a conversa como 'in_progress' (IA atendendo) DEPOIS do envio ter sido
@@ -560,7 +560,7 @@ export class ConversationService {
           // Usar campo caption se disponível e não vazio, caso contrário não enviar caption
           const caption = media.caption && media.caption.trim() ? media.caption.trim() : undefined;
           
-          await whatsappService.sendMedia(contactNumber, media.file_path, caption, true, media.id, 0, lid, 'ai');
+          await whatsappService.sendMedia(contactNumber, media.file_path, caption, true, media.id, 0, lid, 'ai', { conversationId });
           
           // Registrar que foi enviada
           await this.mediaSentTrackingModel.markMediaAsSent(conversationId, media.id);
