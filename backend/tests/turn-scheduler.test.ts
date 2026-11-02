@@ -84,8 +84,9 @@ test('debounce: teto desde a 1ª mensagem mesmo com cliente digitando sem parar'
   for (let i = 0; i < 8; i++) { s.enqueue(1, { content: `parte ${i} da pergunta longa`, dbId: i }); await esperar(35); }
   // 8 x 35 ms = 280 ms > teto de 200 ms: o 1º turno tem que ter saído perto dos 200 ms.
   await s.idle(1);
-  assert.ok(f.turnos.length >= 2, 'tinha que ter disparado pelo teto antes da última mensagem');
-  assert.ok(f.turnos[0].batch.length < 8, `o 1º lote esperou todas: ${f.turnos[0].batch.length}`);
+  const diag = JSON.stringify(f.turnos.map((t) => ({ n: t.batch.length, at: t.at, r: t.result })));
+  assert.ok(f.turnos.length >= 2, `tinha que ter disparado pelo teto antes da última mensagem: ${diag}`);
+  assert.ok(f.turnos[0].batch.length < 8, `o 1º lote esperou todas: ${diag}`);
   const todos = f.turnos.flatMap((t) => t.batch.map((b) => b.dbId));
   assert.deepEqual(todos, [0, 1, 2, 3, 4, 5, 6, 7], 'nenhuma mensagem perdida nem repetida');
   assert.ok(Date.now() - t0 < 1000);
