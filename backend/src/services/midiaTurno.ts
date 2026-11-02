@@ -18,6 +18,7 @@ import axios from 'axios';
 import pool from '../config/database';
 import logger from '../utils/logger';
 import { envFloat, envInt, multimodalDataCollection, multimodalModel } from '../utils/agentFlags';
+import { capacidadesDe, reasoningPara } from './modelosOpenRouter';
 
 export type ParteConteudo =
   | { type: 'text'; text: string }
@@ -92,6 +93,10 @@ export interface PlanoMidias {
   videosNaoVistos: Array<{ mediaId: number; motivo: string }>;
   /** fotos que não vão (formato, tamanho, limite por turno, erro de leitura) */
   fotosNaoVistas: Array<{ mediaId: number; motivo: string }>;
+  /** etapa 6: mídias que o modelo principal não entende, descritas por outro modelo (entram como texto) */
+  descritas?: Array<{ mediaId: number; tipo: 'foto' | 'video'; descricao: DescricaoMidia; modelo: string }>;
+  /** etapa 6: nenhum modelo do painel aceita esta mídia: atendente */
+  semModelo?: Array<{ mediaId: number; tipo: 'foto' | 'video' }>;
 }
 
 /**
@@ -151,6 +156,14 @@ export function blocoMidiasDoTurno(plano: PlanoMidias): string {
   if (plano.fotosNaoVistas.length) {
     linhas.push(`[foto recebida] (${plano.fotosNaoVistas.length} foto(s) que você não consegue ver: se precisar, peça ao cliente para descrever)`);
   }
+  if (plano.descritas?.length) {
+    linhas.push('[o cliente enviou mídia que você não consegue abrir; abaixo a descrição feita por outro modelo. Use apenas o que estiver descrito; não invente o que não estiver aqui]');
+    for (const d of plano.descritas) linhas.push(linhaMidia(d.tipo === 'video' ? 'video' : 'image', d.descricao));
+  }
+  if (plano.semModelo?.length) {
+    const n = plano.semModelo.length;
+    linhas.push(`[mídia recebida] (${n} foto(s)/vídeo(s) que nenhum modelo configurado consegue ver: diga ao cliente que um atendente vai analisar)`);
+  }
   return linhas.join('\n');
 }
 
@@ -161,6 +174,7 @@ export function alertaVideoGrande(plano: PlanoMidias): string | null {
     motivos.push(`vídeo grande demais para a IA analisar (${plano.videosGrandes.map((v) => `${(v.bytes / MB).toFixed(1)} MB`).join(', ')})`);
   }
   if (plano.videosNaoVistos.length) motivos.push(`${plano.videosNaoVistos.length} vídeo(s) que a IA não conseguiu abrir`);
+  if (plano.semModelo?.length) motivos.push(`${plano.semModelo.length} foto(s)/vídeo(s) que nenhum modelo configurado no painel consegue ver`);
   if (motivos.length === 0) return null;
   return `[ALERTAR_ATENDENTE: Cliente enviou ${motivos.join(' e ')}. Resumo: veja o vídeo na conversa.]`;
 }
@@ -329,8 +343,12 @@ export function normalizarDescricao(obj: any): DescricaoMidia | null {
   return d.descricao ? d : null;
 }
 
-/** Chama o modelo multimodal com json_schema estrito. Lança em erro (quem chama trata). */
-export async function descreverArquivo(arq: MidiaArquivo): Promise<{ descricao: DescricaoMidia; modelo: string; custo?: number; ms: number }> {
+/**
+ * Chama o modelo multimodal com json_schema estrito. Lança em erro (quem chama trata).
+ * Etapa 6: `modeloEscolhido` (vindo do painel) troca o modelo; o raciocínio e o json_schema seguem o
+ * catálogo do OpenRouter (modelo sem response_format: o JSON é lido do texto).
+ */
+export async function descreverArquivo(arq: MidiaArquivo, modeloEscolhido?: string): Promise<{ descricao: DescricaoMidia; modelo: string; custo?: number; ms: number }> {
   const mime = mimeDaMidia(arq);
   if (!mime) throw new Error('formato não suportado');
   const limites = limitesDoEnv(10_000);
@@ -342,16 +360,22 @@ export async function descreverArquivo(arq: MidiaArquivo): Promise<{ descricao: 
   if (buf.length > max) throw new Error('grande demais');
   const url = `data:${mime};base64,${buf.toString('base64')}`;
   const parte: ParteConteudo = arq.fileType === 'video' ? { type: 'video_url', video_url: { url } } : { type: 'image_url', image_url: { url } };
-  const modelo = (process.env.MIDIA_DESCRICAO_MODELO || '').trim() || multimodalModel();
-  const body = {
+  const painel = (modeloEscolhido || '').trim();
+  const modelo = painel || (process.env.MIDIA_DESCRICAO_MODELO || '').trim() || multimodalModel();
+  if (!modelo) throw new Error('nenhum modelo de foto/vídeo configurado');
+  const cap = painel ? capacidadesDe(painel) : null;
+  const semJson = !!cap && cap.conhecido && cap.respostaJson === false;
+  const body: Record<string, any> = {
     model: modelo,
-    messages: [{ role: 'user', content: [{ type: 'text', text: PROMPT_DESCRICAO }, parte] }],
-    response_format: { type: 'json_schema', json_schema: { name: 'descricao_midia', strict: true, schema: ESQUEMA_DESCRICAO } },
+    messages: [{ role: 'user', content: [{ type: 'text', text: semJson ? `${PROMPT_DESCRICAO} Responda só com um objeto JSON com os campos tipo, descricao, texto_visivel, codigo_erro, numero_maquina.` : PROMPT_DESCRICAO }, parte] }],
     max_tokens: 400,
     temperature: 0,
-    reasoning: { effort: 'none', exclude: true },
+    reasoning: painel ? reasoningPara(cap) : { effort: 'none', exclude: true },
     provider: { data_collection: multimodalDataCollection() },
   };
+  if (!semJson) body.response_format = { type: 'json_schema', json_schema: { name: 'descricao_midia', strict: true, schema: ESQUEMA_DESCRICAO } };
+  // Modelo com raciocínio obrigatório gasta tokens pensando: folga para o JSON caber.
+  if (painel && body.reasoning?.effort !== 'none') body.max_tokens = 2000;
   const t0 = Date.now();
   const res = await axios.post(`${(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '')}/chat/completions`, body, {
     headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY || ''}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://agentezap.local', 'X-Title': 'AgenteZap' },
@@ -362,9 +386,11 @@ export async function descreverArquivo(arq: MidiaArquivo): Promise<{ descricao: 
   const txt = res.data?.choices?.[0]?.message?.content;
   let obj: any = null;
   try {
-    obj = JSON.parse(String(txt || '').replace(/^```(?:json)?\s*|\s*```$/g, ''));
+    obj = JSON.parse(String(txt || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
   } catch {
-    obj = null;
+    // Sem json_schema o modelo pode cercar o JSON de texto: pega o primeiro objeto.
+    const m = /\{[\s\S]*\}/.exec(String(txt || ''));
+    try { obj = m ? JSON.parse(m[0]) : null; } catch { obj = null; }
   }
   const descricao = normalizarDescricao(obj);
   if (!descricao) throw new Error('descrição vazia ou inválida');
@@ -407,7 +433,34 @@ export async function comRetentativa<T>(fn: () => Promise<T>, esperas: number[],
   }
 }
 
-export async function descreverMidiaRecebida(messageDbId: number, mediaId: number): Promise<DescricaoMidia | null> {
+/** Descrições em andamento (por messages.id): o turno espera a da chegada em vez de pagar duas vezes. */
+const descricoesEmAndamento = new Map<number, Promise<DescricaoMidia | null>>();
+
+export function descricaoEmAndamento(messageDbId: number): Promise<DescricaoMidia | null> | undefined {
+  return descricoesEmAndamento.get(messageDbId);
+}
+
+/**
+ * opts.modelo (etapa 6): modelo de foto/vídeo do painel; sem ele, o da etapa 4 (MIDIA_DESCRICAO_MODELO
+ * ou o do .env). opts.modeloPara: escolhe o modelo pelo tipo da mídia (null = ninguém aceita: não descreve).
+ */
+export function descreverMidiaRecebida(
+  messageDbId: number,
+  mediaId: number,
+  opts: { modelo?: string; modeloPara?: (tipo: 'image' | 'video') => Promise<string | null> } = {}
+): Promise<DescricaoMidia | null> {
+  const atual = descricoesEmAndamento.get(messageDbId);
+  if (atual) return atual;
+  const p = descreverMidiaRecebidaAgora(messageDbId, mediaId, opts).finally(() => descricoesEmAndamento.delete(messageDbId));
+  descricoesEmAndamento.set(messageDbId, p);
+  return p;
+}
+
+async function descreverMidiaRecebidaAgora(
+  messageDbId: number,
+  mediaId: number,
+  opts: { modelo?: string; modeloPara?: (tipo: 'image' | 'video') => Promise<string | null> }
+): Promise<DescricaoMidia | null> {
   try {
     const conn = await pool.getConnection();
     let arq: MidiaArquivo | null = null;
@@ -419,7 +472,15 @@ export async function descreverMidiaRecebida(messageDbId: number, mediaId: numbe
     }
     if (!arq || !mimeDaMidia(arq)) return null;
     const alvo = arq;
-    const out = await comRetentativa(() => descreverArquivo(alvo), ESPERAS_DESCRICAO_MS);
+    let modelo = opts.modelo;
+    if (!modelo && opts.modeloPara) {
+      modelo = (await opts.modeloPara(alvo.fileType === 'video' ? 'video' : 'image')) || undefined;
+      if (!modelo) {
+        logger.info(`[midia] mensagem ${messageDbId}: nenhum modelo do painel aceita ${alvo.fileType}; sem descrição`);
+        return null;
+      }
+    }
+    const out = await comRetentativa(() => descreverArquivo(alvo, modelo), ESPERAS_DESCRICAO_MS);
     await gravarDescricao(messageDbId, mediaId, out.descricao, out.modelo);
     logger.info(`[midia] descrição gravada: mensagem ${messageDbId}, mídia ${mediaId}, tipo ${out.descricao.tipo}, ${out.ms} ms, US$ ${out.custo ?? '?'}`);
     return out.descricao;
@@ -470,5 +531,82 @@ export function metaMultimodal(plano: PlanoMidias, modelo: string): Record<strin
     videos_grandes: plano.videosGrandes.length,
     videos_nao_vistos: plano.videosNaoVistos.length,
     fotos_nao_vistas: plano.fotosNaoVistas.length,
+    ...(plano.descritas ? { descritas: plano.descritas.length, visao: [...new Set(plano.descritas.map((d) => d.modelo))].join(',') } : {}),
+    ...(plano.semModelo ? { sem_modelo: plano.semModelo.length } : {}),
   };
+}
+
+// ------------------------------------------------------------------ etapa 6: modelo do painel
+
+/**
+ * Plano do turno com o modelo do painel (AGENTE_MODELO_PAINEL). Para cada foto/vídeo do lote:
+ * - o modelo principal aceita o tipo (catálogo) -> vai inline, como na etapa 4 (planejarMidias);
+ * - não aceita -> `descritor(tipo)` escolhe o modelo de foto/vídeo; a descrição entra como texto;
+ * - ninguém aceita -> semModelo (atendente). Vídeo grande demais continua indo ao atendente.
+ * Falha na descrição: vídeo -> videosNaoVistos (atendente); foto -> fotosNaoVistas.
+ * `descrever` é injetado (testes); na produção é descricaoParaTurno.
+ */
+export async function planejarTurnoPainel(
+  arquivos: MidiaArquivo[],
+  limites: LimitesMidia,
+  ler: (p: string) => Buffer,
+  principalAceita: (tipo: 'image' | 'video') => boolean,
+  descritor: (tipo: 'image' | 'video') => Promise<string | null> | string | null,
+  descrever: (arq: MidiaArquivo, modelo: string) => Promise<DescricaoMidia | null>
+): Promise<PlanoMidias> {
+  const inline: MidiaArquivo[] = [];
+  const outros: MidiaArquivo[] = [];
+  for (const a of arquivos) {
+    if (a.fileType !== 'image' && a.fileType !== 'video') continue;
+    (principalAceita(a.fileType) ? inline : outros).push(a);
+  }
+  const plano = planejarMidias(inline, limites, ler);
+  plano.descritas = [];
+  plano.semModelo = [];
+  let usados = plano.anexadas.length;
+  for (const arq of outros) {
+    const video = arq.fileType === 'video';
+    const tipo: 'image' | 'video' = video ? 'video' : 'image';
+    const naoVista = (motivo: string) => (video ? plano.videosNaoVistos : plano.fotosNaoVistas).push({ mediaId: arq.mediaId, motivo });
+    if (!mimeDaMidia(arq)) { naoVista('formato'); continue; }
+    const max = video ? limites.videoMaxBytes : limites.imagemMaxBytes;
+    if (video && arq.fileSize > max) { plano.videosGrandes.push({ mediaId: arq.mediaId, bytes: arq.fileSize }); continue; }
+    if (!video && arq.fileSize > max) { naoVista('tamanho'); continue; }
+    if (usados >= limites.maxPorTurno) { naoVista('limite_por_turno'); continue; }
+    const modelo = await descritor(tipo);
+    if (!modelo) { plano.semModelo.push({ mediaId: arq.mediaId, tipo: video ? 'video' : 'foto' }); continue; }
+    let d: DescricaoMidia | null = null;
+    try { d = await descrever(arq, modelo); } catch { d = null; }
+    if (!d) { naoVista('descricao'); continue; }
+    usados++;
+    plano.descritas.push({ mediaId: arq.mediaId, tipo: video ? 'video' : 'foto', descricao: d, modelo });
+  }
+  return plano;
+}
+
+function comPrazo<T>(p: Promise<T>, ms: number, valor: T): Promise<T> {
+  let t: NodeJS.Timeout | undefined;
+  const prazo = new Promise<T>((r) => { t = setTimeout(() => r(valor), ms); });
+  return Promise.race([p, prazo]).finally(() => { if (t) clearTimeout(t); });
+}
+
+/**
+ * Descrição para o turno: a da chegada (em andamento ou gravada) ou uma nova, agora, com o modelo
+ * escolhido. Prazo: AGENTE_VISAO_TIMEOUT_MS (padrão 25 s). Nunca lança.
+ */
+export async function descricaoParaTurno(arq: MidiaArquivo, modelo: string): Promise<DescricaoMidia | null> {
+  const prazo = envInt('AGENTE_VISAO_TIMEOUT_MS', 25000, 1000);
+  try {
+    const andamento = descricaoEmAndamento(arq.messageDbId);
+    if (andamento) {
+      const d = await comPrazo(andamento, prazo, null);
+      if (d) return d;
+    }
+    const gravada = (await infoMidiasHistorico([arq.messageDbId])).get(arq.messageDbId)?.descricao;
+    if (gravada && gravada.descricao) return gravada;
+    return await comPrazo(descreverMidiaRecebida(arq.messageDbId, arq.mediaId, { modelo }), prazo, null);
+  } catch (err: any) {
+    logger.warn(`[midia] descrição para o turno falhou (mensagem ${arq.messageDbId}): ${err?.message || err}`);
+    return null;
+  }
 }

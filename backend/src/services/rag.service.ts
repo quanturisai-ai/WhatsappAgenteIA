@@ -12,9 +12,11 @@ import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
-import { agenteToolsAppliesTo, agenteToolsMode, agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, openrouterPayloadV2, ragEnabledMode, ragMidiaIdFix } from '../utils/agentFlags';
+import { agenteToolsAppliesTo, agenteToolsMode, agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, modeloPainelAppliesTo, modeloPainelMode, multimodalModel, openrouterPayloadV2, ragEnabledMode, ragMidiaIdFix } from '../utils/agentFlags';
 import { AcaoAgente, definicoesTools, loopFerramentas, MAX_CHAMADAS_ABSOLUTO, midiaNoCatalogo } from './agenteTools';
-import { PlanoMidias, alertaVideoGrande, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
+import { PlanoMidias, alertaVideoGrande, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias, planejarTurnoPainel, descricaoParaTurno } from './midiaTurno';
+import { aceita, capacidades, capacidadesDe, garantirCatalogo, marcarModeloSemTools, modeloSemTools, reasoningPara } from './modelosOpenRouter';
+import { escolherDescritor, lerModelosExtras, resolverModelos } from './modelosPainel';
 import fs from 'fs';
 import { currentTurn } from '../utils/turnMetrics';
 import { buildContextoTurno, buildSystemFixo, dataHoraMinuto, loadAgenteYaml, mensagemFinal } from './agentePrompt';
@@ -47,7 +49,9 @@ export interface TurnBatchInfo {
 type AgenteYamlTurno = {
   messages: Array<{ role: ChatMessage['role']; content: any }>;
   systemHash: string;
-  multimodal?: { modelo: string; plano: PlanoMidias | null };
+  multimodal?: { modelo: string; plano: PlanoMidias | null; painel?: boolean };
+  /** Etapa 6 (AGENTE_MODELO_PAINEL): modelo do painel e raciocínio pelo catálogo do OpenRouter. */
+  painel?: { modelo: string; reasoning: { effort: string; exclude: true } };
   /** Item 6: tools nativas deste turno (catálogo de mídias = o mesmo do system). */
   tools?: { defs: any[]; midiasCatalogo: Set<number>; contatoProativo: boolean };
 };
@@ -558,7 +562,8 @@ export class RAGService {
     userMessage: string,
     includeHistory: boolean,
     customHistory: Array<{ role: string; content: string }> | undefined,
-    batch: TurnBatchInfo
+    batch: TurnBatchInfo,
+    opcoes: { semTools?: boolean } = {}
   ): Promise<AgenteYamlTurno> {
     const cfg = loadAgenteYaml();
     const [painel, topicos, midias] = await Promise.all([
@@ -568,8 +573,18 @@ export class RAGService {
     ]);
     // Só autorização explícita de quem chama (ConversationService); sem ela, nunca inclui.
     const incluirReservados = batch.contatoiaAutorizado === true;
+    // Etapa 6 (AGENTE_MODELO_PAINEL): o modelo do painel responde e o catálogo diz o que ele aceita.
+    let pm: { modelos: ReturnType<typeof resolverModelos>; cap: Awaited<ReturnType<typeof capacidades>> } | null = null;
+    if (await this.useModeloPainel(conversationId)) {
+      const modelos = resolverModelos({ generation_model: (painel as any)?.generation_model, ...(await lerModelosExtras(userId)) });
+      if (!modelos.geracao) throw new Error('nenhum modelo de geração no painel nem em OPENROUTER_GENERATION_MODEL');
+      pm = { modelos, cap: await capacidades(modelos.geracao) };
+    }
+    // Modelo sem tools (catálogo ou recusa recente do provedor): modo antigo por marcador.
+    const toolsDoModelo = !pm || (pm.cap.tools !== false && !modeloSemTools(pm.modelos.geracao));
+    if (pm && !toolsDoModelo) logger.info(`[modelos] ${pm.modelos.geracao} sem tools: turno no modo por marcador`);
     // Item 6 (AGENTE_TOOLS): tools nativas só com payload v2 e com a seção ferramentas_nativas no yaml.
-    const usarTools = !!cfg.ferramentas_nativas && openrouterPayloadV2(true) && await this.useAgenteTools(conversationId);
+    const usarTools = !opcoes.semTools && toolsDoModelo && !!cfg.ferramentas_nativas && openrouterPayloadV2(true) && await this.useAgenteTools(conversationId);
     const sys = buildSystemFixo(cfg, painel as any, topicos as any, midias as any, { incluirReservados, ferramentasNativas: usarTools });
     // Base grande demais para o contexto do modelo: volta ao prompt antigo (RAG) neste turno.
     const maxChars = envInt('AGENTE_SYSTEM_MAX_CHARS', 120000, 1000);
@@ -596,7 +611,8 @@ export class RAGService {
     // Item 5 (AGENTE_MULTIMODAL): só em conversa real do contato liberado (test = AGENTE_TEST_NUMBERS).
     const multimodal = conversationId > 0 && !!telefone && multimodalAppliesTo(telefone);
     // Descrições de mídia no histórico só com modelo multimodal (essa chamada leva data_collection=deny).
-    const veMidia = multimodal && modelAcceptsMedia(multimodalModel());
+    // Etapa 6: com o modelo do painel, toda chamada do caminho multimodal leva deny.
+    const veMidia = multimodal && (!!pm || modelAcceptsMedia(multimodalModel()));
     const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory, veMidia) : [];
     const messages: Array<{ role: ChatMessage['role']; content: any }> = buildChatMessages(sys.text, history, userMessage);
     const last = messages[messages.length - 1];
@@ -604,14 +620,26 @@ export class RAGService {
 
     let mm: { modelo: string; plano: PlanoMidias | null } | undefined;
     if (multimodal) {
-      const modelo = multimodalModel();
+      const modelo = pm ? pm.modelos.geracao : multimodalModel();
       let plano: PlanoMidias | null = null;
       if (veMidia) {
         try {
           const arquivos = await carregarMidiasDoLote(conversationId, batch.batchDbIds);
           if (arquivos.length > 0) {
             const bytesTexto = Buffer.byteLength(JSON.stringify(messages), 'utf8');
-            plano = planejarMidias(arquivos, limitesDoEnv(bytesTexto), (p) => fs.readFileSync(p));
+            if (pm) {
+              const p = pm;
+              const midiasM = { geracao: p.modelos.geracao, visao: p.modelos.visao };
+              await Promise.all([capacidades(p.modelos.visao), garantirCatalogo({ esperaMs: 5000 })]);
+              plano = await planejarTurnoPainel(
+                arquivos, limitesDoEnv(bytesTexto), (f) => fs.readFileSync(f),
+                (tipo) => aceita(p.cap, tipo) === true,
+                (tipo) => escolherDescritor(tipo, midiasM, capacidadesDe),
+                descricaoParaTurno
+              );
+            } else {
+              plano = planejarMidias(arquivos, limitesDoEnv(bytesTexto), (p) => fs.readFileSync(p));
+            }
             last.content = conteudoDoTurno(last.content, plano);
           }
         } catch (error: any) {
@@ -620,7 +648,7 @@ export class RAGService {
           plano = null;
         }
       }
-      mm = { modelo, plano };
+      mm = { modelo, plano, ...(pm ? { painel: true } : {}) };
     }
 
     const ctx = currentTurn();
@@ -631,6 +659,7 @@ export class RAGService {
       ctx.meta.system_chars = sys.text.length;
       ctx.meta.historico_msgs = history.length;
       if (mm) ctx.meta.multimodal = mm.plano ? metaMultimodal(mm.plano, mm.modelo) : { modelo: mm.modelo };
+      if (pm) ctx.meta.modelo_painel = { modelo: pm.modelos.geracao, conhecido: pm.cap.conhecido, tools: usarTools };
     }
     logger.info(`[agente.yaml] conversa ${conversationId}: system ${sys.hash} (${sys.text.length} chars, ${sys.topicos.length} tópicos, ${sys.midias.length} mídias${sys.reservadosIncluidos.length ? `, reservados ${sys.reservadosIncluidos.join(',')}` : ''}), histórico ${history.length}`);
     let tools: AgenteYamlTurno['tools'];
@@ -644,7 +673,22 @@ export class RAGService {
       };
       if (ctx) ctx.meta.tools = { modo: 'nativo' };
     }
-    return { messages, systemHash: sys.hash, multimodal: mm, tools };
+    const painelOut = pm ? { modelo: pm.modelos.geracao, reasoning: reasoningPara(pm.cap) } : undefined;
+    return { messages, systemHash: sys.hash, multimodal: mm, tools, painel: painelOut };
+  }
+
+  /** Etapa 6: o modelo do painel vale nesta conversa? Chat de teste (conversa 0) só no modo on. */
+  private async useModeloPainel(conversationId: number): Promise<boolean> {
+    const mode = modeloPainelMode();
+    if (mode === 'off') return false;
+    if (conversationId <= 0) return mode === 'on';
+    if (mode === 'on') return true;
+    try {
+      const conversation = await this.conversationModel.findById(conversationId);
+      return modeloPainelAppliesTo(conversation?.contact_number);
+    } catch {
+      return false;
+    }
   }
 
   /** Item 6: esta conversa usa as ferramentas nativas? Chat de teste do painel (conversa 0) só no modo on. */
@@ -1170,16 +1214,47 @@ export class RAGService {
         if (ctx) ctx.meta.prompt = 'rag';
       }
       // Item 5: no caminho multimodal o modelo do .env (OPENROUTER_GENERATION_MODEL) vale sobre o do painel.
-      const mm = yaml?.multimodal;
+      // Etapa 6 (AGENTE_MODELO_PAINEL): o do painel vale sempre (yaml.painel), como no chat de teste.
+      let mm = yaml?.multimodal;
       const extra: any = this.llmExtra(conversationId, !!yaml);
-      if (mm && modelAcceptsMedia(mm.modelo)) {
+      if (mm && (mm.painel || modelAcceptsMedia(mm.modelo))) {
         extra.dataCollection = multimodalDataCollection();
         extra.temMidia = !!mm.plano && mm.plano.partes.length > 0;
       }
+      if (yaml?.painel) extra.reasoning = yaml.painel.reasoning;
       let responseText: string;
       try {
-        const modeloTurno = mm ? mm.modelo : generationModel;
-        if (yaml?.tools) {
+        const modeloTurno = yaml?.painel ? yaml.painel.modelo : mm ? mm.modelo : generationModel;
+        if (yaml?.tools && yaml.painel) {
+          // Etapa 6: provedor recusou tools -> marca o modelo (1 h) e refaz o turno no modo por marcador.
+          const t = yaml.tools;
+          try {
+            const r = await loopFerramentas(
+              (msgs) => this.ollamaService.generateWithTools(msgs, modeloTurno, generationOptions, extra, t.defs),
+              llmInput as any[],
+              { midiasCatalogo: t.midiasCatalogo, contatoProativo: t.contatoProativo },
+              Math.min(envInt('AGENTE_TOOLS_MAX_CHAMADAS', 3, 1), MAX_CHAMADAS_ABSOLUTO)
+            );
+            responseText = r.texto;
+            batch.ferramentas = { acoes: r.acoes, chamadas: r.chamadas, estourou: r.estourou };
+            const ctxT = currentTurn();
+            if (ctxT) ctxT.meta.tools = { modo: 'nativo', chamadas: r.chamadas, pedidas: r.pedidas, acoes: r.acoes.map((a) => a.tipo), estourou: r.estourou };
+            if (r.estourou) logger.warn(`[tools] conversa ${conversationId}: limite de ${r.chamadas} chamadas sem resposta; atendente será chamado`);
+            else if (r.pedidas.length) logger.info(`[tools] conversa ${conversationId}: ${r.chamadas} chamada(s), ferramentas ${r.pedidas.join(', ')}, ações ${r.acoes.map((a) => a.tipo).join(', ') || '-'}`);
+          } catch (error: any) {
+            if (!error?.semSuporteTools) throw error;
+            logger.warn(`[modelos] ${modeloTurno} recusou tools; refazendo o turno no modo por marcador`);
+            marcarModeloSemTools(yaml.painel.modelo);
+            batch.ferramentas = undefined;
+            yaml = await this.buildAgenteYamlMessages(userId, conversationId, userMessage, includeHistory, customHistory, batch, { semTools: true });
+            llmInput = yaml.messages;
+            prompt = renderForLog(yaml.messages);
+            mm = yaml.multimodal;
+            const ctxT = currentTurn();
+            if (ctxT) ctxT.meta.tools = { modo: 'marcador', recaida: 'sem_suporte_tools' };
+            responseText = await this.ollamaService.generateResponse(llmInput, undefined, modeloTurno, generationOptions, extra);
+          }
+        } else if (yaml?.tools) {
           // Item 6: loop com tools nativas, teto AGENTE_TOOLS_MAX_CHAMADAS (3); ações executadas depois por quem chama.
           const t = yaml.tools;
           const r = await loopFerramentas(

@@ -9,6 +9,7 @@ import { MediaModel } from '../models/media.model';
 import logger from '../utils/logger';
 import { deveDescreverMidia, isTestNumber, turnSchedulerAppliesTo } from '../utils/agentFlags';
 import { descreverMidiaRecebida } from '../services/midiaTurno';
+import { opcoesDescricaoChegada } from '../services/modelosPainel';
 import { emitConversationNew, emitConversationUpdated } from '../utils/conversationSocketEmitter';
 
 const conversationService = new ConversationService();
@@ -868,7 +869,7 @@ export const simulateIncomingMediaForTest = async (
       source: 'client',
     } as any);
     if (saved?.id && deveDescreverMidia(conversation.contact_number)) {
-      void descreverMidiaRecebida(Number(saved.id), Number(mediaId));
+      void descreverMidiaRecebida(Number(saved.id), Number(mediaId), opcoesDescricaoChegada(userId, conversation.contact_number));
     }
     whatsappService.turnScheduler.enqueue(conversationId, { messageId, dbId: saved?.id, content });
     logger.info(`[simulate-incoming-media] Mídia de teste na fila (conversa ${conversationId}, msg ${saved?.id}, mídia ${mediaId}, ${buffer.length} bytes)`);

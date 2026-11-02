@@ -1,10 +1,11 @@
 import axios, { AxiosInstance } from 'axios';
 import { recordLlmCall, usageFields } from '../utils/turnMetrics';
-import { envInt, openrouterPayloadV2, openrouterProviderConfig, openrouterProviderMode, turnMetricsEnabled } from '../utils/agentFlags';
+import { envInt, modeloPainelMode, openrouterPayloadV2, openrouterProviderConfig, openrouterProviderMode, turnMetricsEnabled } from '../utils/agentFlags';
 import { currentTurn } from '../utils/turnMetrics';
 import logger from '../utils/logger';
 import { currentTurnControl, isTurnAbort } from '../utils/turnControl';
 import { semBase64, semBase64NoTexto } from '../utils/semBase64';
+import { erroSemSuporteTools, reasoningObrigatorio } from './modelosOpenRouter';
 
 /** Item 2: chamada dentro de um turno do agendador leva o sinal de cancelamento (mensagem nova). */
 function requestOptions(): [] | [{ signal: AbortSignal }] {
@@ -22,10 +23,10 @@ export class OpenRouterService {
   constructor() {
     this.baseUrl = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
-    this.defaultEmbeddingModel =
-      process.env.OPENROUTER_EMBEDDING_MODEL || 'thenlper/gte-base';
-    this.defaultGenerationModel =
-      process.env.OPENROUTER_GENERATION_MODEL || 'deepseek/deepseek-v4-flash';
+    // Etapa 6 (regra do dono): nenhum modelo fixo no código. Quem escolhe é o painel; o .env só é o
+    // padrão quando o painel está vazio. Os dois vazios = erro claro na chamada.
+    this.defaultEmbeddingModel = (process.env.OPENROUTER_EMBEDDING_MODEL || '').trim();
+    this.defaultGenerationModel = (process.env.OPENROUTER_GENERATION_MODEL || '').trim();
 
     this.axiosInstance = axios.create({
       baseURL: this.baseUrl,
@@ -40,8 +41,8 @@ export class OpenRouterService {
 
     logger.info('OpenRouterService inicializado:');
     logger.info(`  - Base URL: ${this.baseUrl}`);
-    logger.info(`  - Modelo de embedding padrão: ${this.defaultEmbeddingModel}`);
-    logger.info(`  - Modelo de geração padrão: ${this.defaultGenerationModel}`);
+    logger.info(`  - Modelo de embedding padrão (.env): ${this.defaultEmbeddingModel || '(vazio: usa o do painel)'}`);
+    logger.info(`  - Modelo de geração padrão (.env): ${this.defaultGenerationModel || '(vazio: usa o do painel)'}`);
   }
 
   /**
@@ -49,6 +50,7 @@ export class OpenRouterService {
    */
   async generateEmbedding(text: string, model?: string): Promise<number[]> {
     const embeddingModel = model || this.defaultEmbeddingModel;
+    if (!embeddingModel) throw new Error('Nenhum modelo de embedding configurado (painel e OPENROUTER_EMBEDDING_MODEL vazios)');
     const tEmb = Date.now();
     try {
       logger.debug(`Gerando embedding com modelo: ${embeddingModel}`);
@@ -224,7 +226,10 @@ export class OpenRouterService {
     extra: GenExtra | undefined,
     tools?: any[],
   ): Promise<{ content: string | null; toolCalls: any[]; extras?: Record<string, any> }> {
-    const generationModel = model || this.defaultGenerationModel;
+    const generationModel = (model || '').trim() || this.defaultGenerationModel;
+    if (!generationModel) {
+      throw new Error('Nenhum modelo de geração configurado: escolha um no painel (ou OPENROUTER_GENERATION_MODEL no .env)');
+    }
     try {
       // Item 3: lista de mensagens (system + histórico user/assistant + atual) vai como está.
       const messages = Array.isArray(prompt)
@@ -248,6 +253,10 @@ export class OpenRouterService {
       }
       // Item 5 (AGENTE_MULTIMODAL): política de privacidade no roteamento (só no caminho multimodal).
       if (extra?.dataCollection) body.provider = { ...(body.provider || {}), data_collection: extra.dataCollection };
+      // Etapa 6 (AGENTE_MODELO_PAINEL): modelo com raciocínio obrigatório (catálogo do OpenRouter) recusa
+      // effort "none" com 400; vai o menor esforço aceito. Flag off: payload como antes.
+      const rz = extra?.reasoning ?? (modeloPainelMode() !== 'off' ? reasoningObrigatorio(generationModel) : undefined);
+      if (rz) body.reasoning = rz;
       const ctxTurn = currentTurn();
       if (ctxTurn) {
         ctxTurn.meta.payload = v2 ? 'v2' : 'v1';
@@ -317,6 +326,10 @@ export class OpenRouterService {
         logger.error(
           `Status: ${error.response.status}, Dados: ${dados}`,
         );
+        // Etapa 6: modelo/fornecedores sem suporte a tools: quem chama cai no modo por marcador.
+        if (tools && tools.length && erroSemSuporteTools(error)) {
+          throw Object.assign(new Error(`Modelo '${generationModel}' sem suporte a ferramentas (tools) no OpenRouter.`), { semSuporteTools: true });
+        }
         if (error.response.status === 404) {
           throw new Error(
             `Modelo '${generationModel}' não encontrado no OpenRouter.`,
@@ -348,7 +361,14 @@ export class OpenRouterService {
 
 type ChatMsg = { role: string; content: string | any[] | null; tool_calls?: any[]; tool_call_id?: string };
 type GenOptions = { temperature?: number; top_p?: number; top_k?: number; repeat_penalty?: number } | undefined;
-export type GenExtra = { sessionId?: string; agenteYaml?: boolean; dataCollection?: 'deny' | 'allow'; temMidia?: boolean };
+export type GenExtra = {
+  sessionId?: string;
+  agenteYaml?: boolean;
+  dataCollection?: 'deny' | 'allow';
+  temMidia?: boolean;
+  /** Etapa 6 (AGENTE_MODELO_PAINEL): reasoning pelo catálogo (ex.: modelo com raciocínio obrigatório). */
+  reasoning?: { effort: string; exclude: boolean };
+};
 
 const num = (v: any): number => (typeof v === 'string' ? parseFloat(v) : Number(v));
 

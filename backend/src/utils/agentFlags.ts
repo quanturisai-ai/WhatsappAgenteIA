@@ -188,13 +188,15 @@ export function openrouterProviderConfig(): Record<string, any> | undefined {
 /**
  * AGENTE_MULTIMODAL (item 5): off (padrão, antigo) | test (só AGENTE_TEST_NUMBERS) | on (todos).
  * Ligado, e só nos turnos do agente.yaml (RAG_ENABLED=false/test):
- * - o modelo de geração passa a ser OPENROUTER_GENERATION_MODEL (o .env manda; o do painel é ignorado);
- * - se esse modelo for multimodal (AGENTE_MULTIMODAL_MODELOS), a foto/vídeo do lote vai junto
- *   (image_url / video_url em base64); vídeo acima de MIDIA_VIDEO_MAX_MB vira "[vídeo recebido]" + atendente;
+ * - modelo de geração: com AGENTE_MODELO_PAINEL ligado (etapa 6), o do painel (agent_config.generation_model);
+ *   com AGENTE_MODELO_PAINEL=off (comportamento da etapa 4/5), OPENROUTER_GENERATION_MODEL (o .env manda);
+ * - foto/vídeo do lote vai junto quando o modelo aceita (etapa 6: catálogo do OpenRouter; flag off:
+ *   prefixos de AGENTE_MULTIMODAL_MODELOS); vídeo acima de MIDIA_VIDEO_MAX_MB vira "[vídeo recebido]" + atendente;
  * - na chegada, cada foto/vídeo ganha uma descrição estruturada (tabela media_descricoes), usada no histórico;
- * - com modelo multimodal, a chamada leva provider.data_collection = OPENROUTER_DATA_COLLECTION (padrão deny).
- * Volta imediata: AGENTE_MULTIMODAL=off (ou OPENROUTER_GENERATION_MODEL=deepseek/deepseek-v4-flash, que só
- * lê texto: aí nada de mídia vai ao modelo).
+ * - a chamada leva provider.data_collection = OPENROUTER_DATA_COLLECTION (padrão deny).
+ * - etapa 6: o que o modelo do painel não aceita é descrito antes pelo modelo de foto/vídeo do painel e
+ *   entra como texto; nenhum modelo aceita = atendente.
+ * Volta imediata: AGENTE_MULTIMODAL=off.
  */
 export function multimodalMode(): RolloutMode {
   return rolloutMode('AGENTE_MULTIMODAL');
@@ -202,13 +204,37 @@ export function multimodalMode(): RolloutMode {
 export function multimodalAppliesTo(contactNumber: string | null | undefined): boolean {
   return rolloutAppliesTo('AGENTE_MULTIMODAL', contactNumber);
 }
-/** Modelo de geração do caminho multimodal (só o .env). */
+/**
+ * Modelo de geração do caminho multimodal com AGENTE_MODELO_PAINEL=off (etapas 4/5): só o .env.
+ * Etapa 6 (regra do dono): nenhum modelo fixo no código; .env vazio = '' (quem chama avisa no log).
+ */
 export function multimodalModel(): string {
-  return (process.env.OPENROUTER_GENERATION_MODEL || '').trim() || 'deepseek/deepseek-v4-flash';
+  return (process.env.OPENROUTER_GENERATION_MODEL || '').trim();
 }
-/** O modelo aceita imagem/vídeo? Prefixos em AGENTE_MULTIMODAL_MODELOS (padrão: google/gemini-). */
+
+/**
+ * AGENTE_MODELO_PAINEL (etapa 6): off (padrão, comportamento da etapa 5) | test (só AGENTE_TEST_NUMBERS) | on.
+ * Ligado, quem escolhe os modelos é o painel (agent_config), também no WhatsApp:
+ * - generation_model responde ao cliente; vision_model descreve a foto/vídeo que ele não entende;
+ *   transcription_model transcreve o áudio. Campo vazio = padrão do .env (services/modelosPainel).
+ * - o que cada modelo aceita (imagem, vídeo, áudio, tools, raciocínio) vem do catálogo do OpenRouter
+ *   (services/modelosOpenRouter), não de lista fixa; AGENTE_MULTIMODAL_MODELOS só vale com esta flag off.
+ * - modelo sem tools (catálogo ou recusa do provedor): o turno cai no modo antigo por marcador.
+ * Chat de teste do painel (conversa 0): só no modo on. Volta imediata: AGENTE_MODELO_PAINEL=off.
+ */
+export function modeloPainelMode(): RolloutMode {
+  return rolloutMode('AGENTE_MODELO_PAINEL');
+}
+export function modeloPainelAppliesTo(contactNumber: string | null | undefined): boolean {
+  return rolloutAppliesTo('AGENTE_MODELO_PAINEL', contactNumber);
+}
+/**
+ * O modelo aceita imagem/vídeo? Prefixos em AGENTE_MULTIMODAL_MODELOS (etapa 4).
+ * Só com AGENTE_MODELO_PAINEL=off; ligado, quem diz é o catálogo do OpenRouter.
+ */
 export function modelAcceptsMedia(model: string): boolean {
-  const prefixes = (process.env.AGENTE_MULTIMODAL_MODELOS || 'google/gemini-')
+  // Etapa 6: sem lista fixa no código; o .env de produção traz a lista da etapa 4 (vazio = nenhum).
+  const prefixes = (process.env.AGENTE_MULTIMODAL_MODELOS || '')
     .split(/[,;\s]+/).map((p) => p.trim().toLowerCase()).filter(Boolean);
   const m = (model || '').trim().toLowerCase();
   return prefixes.some((p) => m.startsWith(p));
@@ -226,12 +252,15 @@ export function envFloat(name: string, fallback: number): number {
 }
 
 /**
- * Descrever a foto/vídeo na chegada? Só quando o turno desse contato vai pelo caminho multimodal com
- * modelo que vê mídia (AGENTE_MULTIMODAL + agente.yaml + modelo multimodal) e MIDIA_DESCRICAO != off.
+ * Descrever a foto/vídeo na chegada? Só quando o turno desse contato vai pelo caminho multimodal
+ * (AGENTE_MULTIMODAL + agente.yaml) e MIDIA_DESCRICAO != off. Com AGENTE_MODELO_PAINEL ligado sempre
+ * descreve (o modelo do painel pode ser só-texto e precisar da descrição já neste turno); desligado,
+ * só se OPENROUTER_GENERATION_MODEL vê mídia (etapa 4).
  */
 export function deveDescreverMidia(contactNumber: string | null | undefined): boolean {
   if ((process.env.MIDIA_DESCRICAO || 'on').trim().toLowerCase() === 'off') return false;
-  return multimodalAppliesTo(contactNumber) && agenteYamlAppliesTo(contactNumber) && modelAcceptsMedia(multimodalModel());
+  if (!(multimodalAppliesTo(contactNumber) && agenteYamlAppliesTo(contactNumber))) return false;
+  return modeloPainelAppliesTo(contactNumber) || modelAcceptsMedia(multimodalModel());
 }
 
 /**
