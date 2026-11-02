@@ -12,6 +12,18 @@ import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
+import { envInt, historyMessagesAppliesTo, historyMessagesMode } from '../utils/agentFlags';
+import {
+  ChatMessage,
+  buildChatMessages,
+  customHistoryToChat,
+  historyRowsBeforeBatch,
+  renderForLog,
+  rowsToChat,
+} from './chatHistory';
+
+/** Instrução de continuidade no modo de histórico em mensagens (item 3). */
+const CONTINUIDADE_MENSAGENS = `Dê continuidade à conversa respondendo à última mensagem do cliente (a última mensagem do usuário). As mensagens anteriores são o histórico da conversa: use-as como referência para entender o contexto e utilize as instruções acima. A resposta deve ser curta, objetiva, sem repetições desnecessárias e sem incluir informações não confirmadas. Utilize seu raciocínio para formular a melhor resposta possível.`;
 
 /** Lote atual do agendador (item 2), para o histórico não repetir essas mensagens (item 3). */
 export interface TurnBatchInfo {
@@ -473,6 +485,47 @@ export class RAGService {
   }
 
   /**
+   * Item 3: decide se esta conversa usa o histórico em mensagens (HISTORY_MESSAGES on/test).
+   * Chat de teste do painel (conversationId 0) só no modo "on".
+   */
+  private async useMessagesHistory(conversationId: number): Promise<boolean> {
+    const mode = historyMessagesMode();
+    if (mode === 'off') return false;
+    if (conversationId <= 0) return mode === 'on';
+    if (mode === 'on') return true;
+    try {
+      const conversation = await this.conversationModel.findById(conversationId);
+      return historyMessagesAppliesTo(conversation?.contact_number);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Item 3: histórico como mensagens user/assistant. Últimas HISTORY_MAX_MESSAGES (30) mensagens
+   * das últimas HISTORY_MAX_AGE_HOURS (72 h), sem o lote atual.
+   */
+  private async getHistoryAsChat(
+    conversationId: number,
+    currentText: string,
+    batch: TurnBatchInfo,
+    customHistory?: Array<{ role: string; content: string }>
+  ): Promise<ChatMessage[]> {
+    if (customHistory && customHistory.length > 0) return customHistoryToChat(customHistory, currentText);
+    if (conversationId <= 0) return [];
+    const maxMessages = envInt('HISTORY_MAX_MESSAGES', 30, 1);
+    const maxAgeHours = envInt('HISTORY_MAX_AGE_HOURS', 72, 1);
+    try {
+      // Folga para o lote atual e mensagens ainda na fila, que são retiradas depois.
+      const rows = await this.messageModel.findByConversationId(conversationId, maxMessages + 20, maxAgeHours);
+      return rowsToChat(historyRowsBeforeBatch(rows as any, currentText, batch, maxMessages));
+    } catch (error: any) {
+      logger.error(`Erro ao obter histórico (mensagens) da conversa ${conversationId}: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Gerar resumo da conversa
    */
   async generateConversationSummary(conversationId: number, userId: number): Promise<string> {
@@ -622,8 +675,12 @@ export class RAGService {
     conversationId: number,
     userMessage: string,
     includeHistory: boolean = true,
-    customHistory?: Array<{ role: string; content: string }>
+    customHistory?: Array<{ role: string; content: string }>,
+    opts: { messagesMode?: boolean } = {}
   ): Promise<string> {
+    // Item 3 (HISTORY_MESSAGES): o histórico vai como mensagens user/assistant separadas; aqui
+    // fica só o bloco de instruções. Sem a 2ª busca RAG (mensagem anterior) e sem o resumo.
+    const messagesMode = !!opts.messagesMode;
     try {
       // Obter data e hora atual
       const currentDateTime = this.getCurrentDateTime();
@@ -720,7 +777,7 @@ export class RAGService {
 
       // Busca 1: Histórico de contexto (interação anterior do cliente)
       // Usar EXATAMENTE a mesma estrutura da busca do contexto atual
-      if (conversationId > 0) {
+      if (conversationId > 0 && !messagesMode) {
         const lastClientMessage = await this.messageModel.findLastClientMessage(conversationId);
         if (lastClientMessage && lastClientMessage.content) {
           // Buscar contexto RAG com a interação anterior do cliente - EXATAMENTE como o contexto atual
@@ -743,7 +800,7 @@ export class RAGService {
       let historyText = '';
       let lastClientMessage = userMessage; // Por padrão, a mensagem atual é a última
 
-      if (includeHistory) {
+      if (includeHistory && !messagesMode) {
         if (customHistory && customHistory.length > 0) {
           // Usar histórico customizado (para teste)
           const formatted = this.formatCustomHistoryAsNarrative(customHistory);
@@ -834,6 +891,10 @@ export class RAGService {
       }
 
       // 8. Instrução de continuidade (SEMPRE presente)
+      if (messagesMode) {
+        prompt += CONTINUIDADE_MENSAGENS;
+        return prompt;
+      }
       prompt += `Dê continuidade à conversa ABAIXO respondendo à última pergunta do cliente. Use o histórico como referência para entender o contexto e utilize as instruções acima. A resposta deve ser curta, objetiva, sem repetições desnecessárias e sem incluir informações não confirmadas. Utilize seu raciocínio para formular a melhor resposta possível.\n\n`;
 
       // 9. Histórico da conversa (formato narrativo - só aparece se houver)
@@ -859,7 +920,8 @@ export class RAGService {
     conversationId: number,
     userMessage: string,
     customHistory?: Array<{ role: string; content: string }>,
-    includeHistory: boolean = true
+    includeHistory: boolean = true,
+    batch: TurnBatchInfo = {}
   ): Promise<string> {
     try {
       // Obter configuração do agente para pegar o modelo de geração e parâmetros
@@ -887,10 +949,22 @@ export class RAGService {
       logger.debug(`Incluir histórico na resposta: ${includeHistory}`);
 
       // Construir prompt com contexto
-      const prompt = await this.buildPrompt(userId, conversationId, userMessage, includeHistory, customHistory);
+      let prompt: string;
+      let llmInput: string | ChatMessage[];
+      if (await this.useMessagesHistory(conversationId)) {
+        // Item 3: [system: instruções + contexto] + histórico user/assistant + [user: lote atual]
+        const system = await this.buildPrompt(userId, conversationId, userMessage, includeHistory, customHistory, { messagesMode: true });
+        const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory) : [];
+        const messages = buildChatMessages(system, history, userMessage);
+        llmInput = messages;
+        prompt = renderForLog(messages);
+      } else {
+        prompt = await this.buildPrompt(userId, conversationId, userMessage, includeHistory, customHistory);
+        llmInput = prompt;
+      }
 
       // Gerar resposta usando OpenRouterService (usando modelo e parâmetros do AgentConfig)
-      const responseText = await this.ollamaService.generateResponse(prompt, undefined, generationModel, generationOptions);
+      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions);
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
       if (conversationId === 0) {
@@ -941,7 +1015,8 @@ export class RAGService {
   async generateSimpleResponse(
     userId: number,
     conversationId: number,
-    userMessage: string
+    userMessage: string,
+    batch: TurnBatchInfo = {}
   ): Promise<string> {
     try {
       // Obter data e hora atual
@@ -967,6 +1042,32 @@ export class RAGService {
           ? (typeof agentConfig.repeat_penalty === 'string' ? parseFloat(agentConfig.repeat_penalty) : Number(agentConfig.repeat_penalty))
           : undefined,
       };
+
+      // Item 3: histórico em mensagens (sem o lote atual), mesmo formato da resposta principal.
+      if (await this.useMessagesHistory(conversationId)) {
+        let system = '';
+        if (agentConfig?.business_name) system += `Você é um assistente de atendimento da empresa ${agentConfig.business_name}.\n`;
+        if (agentConfig?.personality) system += `\n${agentConfig.personality}\n\n`;
+        system += `Outras instruções:\n${currentDateTime}\n\n${CONTINUIDADE_MENSAGENS}`;
+        const history = await this.getHistoryAsChat(conversationId, userMessage, batch);
+        const messages = buildChatMessages(system, history, userMessage);
+        const text = await this.ollamaService.generateResponse(messages, undefined, generationModel, generationOptions);
+        if (conversationId !== 0) {
+          try {
+            const conversation = await this.conversationModel.findById(conversationId);
+            if (conversation) {
+              WhatsAppConversationLogger.logConversationInteraction(
+                userId, conversationId, conversation.contact_number || 'N/A',
+                conversation.contact_name || conversation.contact_number || 'N/A',
+                userMessage, renderForLog(messages), text
+              );
+            }
+          } catch (error: any) {
+            logger.error(`Erro ao buscar informações da conversa para logging: ${error.message}`);
+          }
+        }
+        return this.cleanAIResponse(text);
+      }
 
       // Obter histórico da conversa em formato narrativo
       const historyData = await this.getConversationHistory(conversationId, userId, 10);
@@ -1045,13 +1146,13 @@ export class RAGService {
     userMessage: string,
     useRAG: boolean = true,
     includeHistory: boolean = true,
-    _batch: TurnBatchInfo = {}
+    batch: TurnBatchInfo = {}
   ): Promise<string> {
     try {
       if (useRAG) {
-        return await this.generateResponse(userId, conversationId, userMessage, undefined, includeHistory);
+        return await this.generateResponse(userId, conversationId, userMessage, undefined, includeHistory, batch);
       } else {
-        return await this.generateSimpleResponse(userId, conversationId, userMessage);
+        return await this.generateSimpleResponse(userId, conversationId, userMessage, batch);
       }
     } catch (error: any) {
       // Item 2: turno cancelado por mensagem nova -> sem fallback (seria uma 2ª chamada à toa).
@@ -1059,7 +1160,7 @@ export class RAGService {
       logger.error(`Erro ao processar mensagem: ${error.message}`);
       // Fallback para resposta simples
       try {
-        return await this.generateSimpleResponse(userId, conversationId, userMessage);
+        return await this.generateSimpleResponse(userId, conversationId, userMessage, batch);
       } catch (fallbackError: any) {
         if (isTurnAbort(fallbackError)) throw fallbackError;
         logger.error(`Erro no fallback: ${fallbackError.message}`);

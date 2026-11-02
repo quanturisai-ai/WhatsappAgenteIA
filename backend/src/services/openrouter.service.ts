@@ -185,7 +185,7 @@ export class OpenRouterService {
    * Para o deepseek-v4-flash, envia reasoning.effort=none para desativar o thinking.
    */
   async generateResponse(
-    prompt: string,
+    prompt: string | Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
     context?: string,
     model?: string,
     options?: {
@@ -197,13 +197,14 @@ export class OpenRouterService {
   ): Promise<string> {
     const generationModel = model || this.defaultGenerationModel;
     try {
-      const fullPrompt = context
-        ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:`
-        : prompt;
+      // Item 3: lista de mensagens (system + histórico user/assistant + atual) vai como está.
+      const messages = Array.isArray(prompt)
+        ? prompt.map((m) => ({ role: m.role, content: m.content }))
+        : [{ role: 'user', content: context ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:` : prompt }];
 
       const body: any = {
         model: generationModel,
-        messages: [{ role: 'user', content: fullPrompt }],
+        messages,
         // Desativa o thinking do DeepSeek e exclui os tokens de raciocínio da resposta.
         // "exclude: true" é essencial — sem ele o modelo ainda processa o thinking
         // antes de responder, mesmo com effort: none.
