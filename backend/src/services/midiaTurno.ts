@@ -262,6 +262,8 @@ export function linhaMidia(fileType: string, d?: DescricaoMidia | null): string 
 
 /** Conteúdo da mensagem do histórico com mídia: 1 linha da mídia + legenda do cliente (se houver). */
 export function conteudoComMidia(content: string | null | undefined, info: InfoMidiaHistorico): string {
+  // Áudio (e tipos desconhecidos) ficam como estão: o conteúdo já é a transcrição.
+  if (info.fileType !== 'image' && info.fileType !== 'video' && info.fileType !== 'document') return String(content ?? '');
   const legenda = String(content || '').trim();
   const semLegenda = !legenda || /^\[(media|mídia|image|video|document)\]$/i.test(legenda);
   const linha = linhaMidia(info.fileType, info.descricao);

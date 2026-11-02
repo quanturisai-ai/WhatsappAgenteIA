@@ -127,6 +127,9 @@ test('histórico: mídia antiga vira 1 linha com código de erro e máquina; sem
   assert.equal(rows[0].content, '[foto do cliente: Painel da secadora com erro | código de erro: E21 | máquina: 03]');
   assert.equal(rows[1].content, '[vídeo recebido]\ndeu erro');
   assert.equal(rows[2].content, 'oi');
+  // áudio: o conteúdo é a transcrição e fica igual
+  const audio = aplicarMidiasNoHistorico([{ id: 5, content: 'a secadora parou', media_id: 12 }], new Map([[5, { fileType: 'audio' }]]));
+  assert.equal(audio[0].content, 'a secadora parou');
   assert.ok(!rows[0].content!.includes('\n'));
 });
 
