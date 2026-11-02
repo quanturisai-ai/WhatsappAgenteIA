@@ -42,7 +42,8 @@ export interface TurnInfo {
 }
 
 export type RunTurn = (conversationId: number, batch: PendingItem[], control: TurnControl, info: TurnInfo) => Promise<TurnResult>;
-export type OnLoop = (conversationId: number, reason: string) => void | Promise<void>;
+/** Pausa a IA da conversa e avisa. Devolve false se não conseguiu pausar. */
+export type OnLoop = (conversationId: number, reason: string) => void | boolean | Promise<void | boolean>;
 export type OnStuck = (conversationId: number, ms: number) => void | Promise<void>;
 
 export interface SchedulerConfig {
@@ -306,11 +307,22 @@ export class TurnScheduler {
             if (r2 === 'hard') {
               // Entrega indeterminada: pausa a IA da conversa (nenhum turno novo envia) e avisa.
               const min = Math.round((this.now() - turnStartedAt) / 60000);
-              logger.error(`[turnos] Conversa ${conversationId}: envio travado há ${min} min; pausando a IA e liberando a fila`);
-              Promise.resolve()
-                .then(() => this.onLoop(conversationId, `envio da resposta travado há ${min} min`))
-                .catch((e: any) => logger.error(`[turnos] Erro ao pausar a conversa ${conversationId}: ${e?.message || e}`));
-              result = 'done';
+              logger.error(`[turnos] Conversa ${conversationId}: envio travado há ${min} min; pausando a IA`);
+              let paused = false;
+              try {
+                paused = (await this.onLoop(conversationId, `envio da resposta travado há ${min} min`)) !== false;
+              } catch (e: any) {
+                logger.error(`[turnos] Erro ao pausar a conversa ${conversationId}: ${e?.message || e}`);
+              }
+              if (paused) {
+                logger.error(`[turnos] Conversa ${conversationId}: IA pausada; liberando a fila`);
+                result = 'done';
+              } else {
+                // Sem a pausa gravada, liberar a fila poderia gerar envio em paralelo: segura até o
+                // envio original terminar.
+                logger.error(`[turnos] Conversa ${conversationId}: não deu para pausar a IA; fila segue presa até o envio terminar`);
+                result = await turn.catch(() => 'done' as TurnResult);
+              }
             } else {
               result = r2;
             }

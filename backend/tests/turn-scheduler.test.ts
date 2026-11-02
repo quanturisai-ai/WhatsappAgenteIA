@@ -303,6 +303,36 @@ test('juiz 3ª passada: envio que nunca termina pausa a IA (sem turno paralelo) 
   assert.equal(ativosQueEnviam, 1);
 });
 
+test('juiz 4ª passada: fila só é liberada depois que a pausa foi gravada; se a pausa falhar, segue presa', async () => {
+  for (const pausaOk of [true, false]) {
+    let chamadas = 0, pausaGravada = false, soltar: (v: TurnResult) => void = () => {};
+    const inicioDoSegundo: boolean[] = [];
+    const run = async (_c: number, _b: PendingItem[], control: TurnControl): Promise<TurnResult> => {
+      chamadas++;
+      if (chamadas === 1) { control.commit(); return new Promise<TurnResult>((r) => { soltar = r; }); }
+      inicioDoSegundo.push(pausaGravada);
+      return 'done';
+    };
+    const onLoop = async () => { await esperar(80); pausaGravada = pausaOk; return pausaOk; };
+    const s = new TurnScheduler(run, onLoop, () => cfg({ turnDeadlineMs: 60 }));
+    s.enqueue(1, { content: 'pergunta?' });
+    await esperar(70);
+    s.enqueue(1, { content: 'outra?' });
+    await esperar(150); // passou do limite duro (120) e a pausa ainda está gravando até ~200
+    assert.equal(chamadas, 1, `${pausaOk}: nenhum turno novo antes da pausa terminar`);
+    await esperar(80);
+    if (pausaOk) {
+      await s.idle(1);
+      assert.deepEqual(inicioDoSegundo, [true], 'turno seguinte só depois da pausa gravada');
+    } else {
+      assert.equal(chamadas, 1, 'pausa falhou: fila presa até o envio original terminar');
+      soltar('sent');
+      await s.idle(1);
+      assert.equal(chamadas, 2);
+    }
+  }
+});
+
 test('juiz #4 (2ª passada): chegadas no mesmo milissegundo mantêm a ordem', () => {
   const s = new TurnScheduler(async () => 'done', () => {}, () => cfg(), () => 5000);
   const a = s.arrivalStamp(), b = s.arrivalStamp(), c = s.arrivalStamp();

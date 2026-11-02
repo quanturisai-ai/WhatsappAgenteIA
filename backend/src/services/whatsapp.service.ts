@@ -2623,10 +2623,12 @@ export class WhatsAppService extends EventEmitter {
     }
   }
 
-  private async handleTurnLoop(conversationId: number, reason: string): Promise<void> {
+  private async handleTurnLoop(conversationId: number, reason: string): Promise<boolean> {
+    let paused = true;
     try {
       await this.conversationService.pauseAutoResponding(conversationId);
     } catch (error: any) {
+      paused = false;
       logger.error(`[turnos] Não foi possível pausar a IA da conversa ${conversationId}: ${error.message}`);
     }
     try {
@@ -2645,6 +2647,7 @@ export class WhatsAppService extends EventEmitter {
     } catch (error: any) {
       logger.error(`[turnos] Não foi possível avisar o atendente sobre o anti-loop da conversa ${conversationId}: ${error.message}`);
     }
+    return paused;
   }
 
   private async handleOutgoingMessage(msg: Message): Promise<void> {
