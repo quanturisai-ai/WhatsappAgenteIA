@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { AsyncLocalStorage } from 'async_hooks';
 import { MessageSource } from '../types';
 
 /**
@@ -14,7 +15,15 @@ import { MessageSource } from '../types';
  *
  * O eco pode chegar antes de `client.sendMessage` resolver (SyncZap emite `message_create`
  * de dentro do próprio sendMessage), por isso o registro é feito ANTES do envio.
+ *
+ * Correlação exata: o envio roda dentro de `echoTokenStore.run(token, ...)`. Como o SyncZap
+ * emite o eco no mesmo contexto assíncrono, o listener lê o token e consome exatamente aquele
+ * registro (conferindo chat + hash). Sem token (ex.: whatsapp-web.js), casa pelo id ou por
+ * chat + hash; se houver registros ambíguos para conversas diferentes, não chuta a conversa.
  */
+
+/** Token do envio em andamento, propagado até o listener do eco. */
+export const echoTokenStore = new AsyncLocalStorage<string>();
 
 export interface OutgoingIntent {
   conversationId: number | null;
@@ -28,6 +37,9 @@ interface Entry extends OutgoingIntent {
   key: string;
   hashKey: string;
   messageId?: string;
+  /** false enquanto o envio está em andamento (não expira); true depois de settle(). */
+  settled: boolean;
+  createdAt: number;
   expiresAt: number;
 }
 
@@ -56,7 +68,15 @@ export class OutgoingEchoRegistry {
   private byMessageId = new Map<string, Entry>();
   private seq = 0;
 
-  constructor(private readonly ttlMs: number = 120_000, private readonly now: () => number = Date.now) {}
+  /**
+   * ttlMs: quanto o registro espera o eco depois que o envio terminou.
+   * maxPendingMs: teto de segurança para registros cujo envio nunca terminou (vazamento).
+   */
+  constructor(
+    private readonly ttlMs: number = 120_000,
+    private readonly now: () => number = Date.now,
+    private readonly maxPendingMs: number = 30 * 60_000,
+  ) {}
 
   static hashKey(text: string, hasMedia: boolean): string {
     return `${hasMedia ? 'm' : 't'}|${textHash(text)}`;
@@ -75,7 +95,9 @@ export class OutgoingEchoRegistry {
       token,
       key: OutgoingEchoRegistry.key(chatId, text, hasMedia),
       hashKey: OutgoingEchoRegistry.hashKey(text, hasMedia),
-      expiresAt: this.now() + this.ttlMs,
+      settled: false,
+      createdAt: this.now(),
+      expiresAt: Number.POSITIVE_INFINITY,
     };
     const list = this.byKey.get(entry.key) || [];
     list.push(entry);
@@ -84,12 +106,19 @@ export class OutgoingEchoRegistry {
     return token;
   }
 
-  /** Depois que o envio devolveu o id real: permite casar o eco também pelo id. */
-  bindMessageId(token: string, messageId: string | undefined | null): void {
+  /**
+   * Envio terminou com sucesso: liga ao id real (se houver) e começa a contar o TTL.
+   * O eco do SyncZap normalmente já consumiu o registro antes disto.
+   */
+  settle(token: string, messageId: string | undefined | null): void {
     const entry = this.byToken.get(token);
-    if (!entry || !messageId) return;
-    entry.messageId = messageId;
-    this.byMessageId.set(messageId, entry);
+    if (!entry) return;
+    entry.settled = true;
+    entry.expiresAt = this.now() + this.ttlMs;
+    if (messageId) {
+      entry.messageId = messageId;
+      this.byMessageId.set(messageId, entry);
+    }
   }
 
   /** Envio falhou: o registro não deve casar com nada. */
@@ -99,12 +128,29 @@ export class OutgoingEchoRegistry {
   }
 
   /**
-   * Consome o registro que corresponde ao eco. Ordem: id da mensagem; chatId + hash;
-   * só hash, se houver exatamente um registro pendente com esse hash (o eco do
-   * whatsapp-web.js pode trazer outro formato de JID). Devolve null se não houver.
+   * Consome o registro que corresponde ao eco. Ordem:
+   * 1. token do envio em andamento (correlação exata), se o chat + hash conferem;
+   * 2. id da mensagem;
+   * 3. chat + hash: um registro só, ou vários equivalentes (mesma conversa/origem). Se forem
+   *    de conversas diferentes, devolve a origem comum com conversationId=null (a conversa é
+   *    resolvida pelo contato, como antes) ou null se nem a origem for comum.
+   * Nunca casa por hash ignorando o chat.
    */
-  take(msg: EchoLike): OutgoingIntent | null {
+  take(msg: EchoLike, token?: string | null): OutgoingIntent | null {
     this.sweep();
+    const hasMedia = !!msg.hasMedia;
+    const text = hasMedia ? (msg._data?.caption ?? msg.body ?? '') : (msg.body ?? '');
+    const chat = msg.to || msg.from || '';
+    const key = OutgoingEchoRegistry.key(chat, text, hasMedia);
+
+    if (token) {
+      const byToken = this.byToken.get(token);
+      if (byToken && byToken.key === key) {
+        this.remove(byToken);
+        return this.toIntent(byToken);
+      }
+    }
+
     const messageId = msg.id?._serialized || '';
     if (messageId) {
       const byId = this.byMessageId.get(messageId);
@@ -114,25 +160,22 @@ export class OutgoingEchoRegistry {
       }
     }
 
-    const hasMedia = !!msg.hasMedia;
-    const text = hasMedia ? (msg._data?.caption ?? msg.body ?? '') : (msg.body ?? '');
-    const chat = msg.to || msg.from || '';
-    const key = OutgoingEchoRegistry.key(chat, text, hasMedia);
     const list = this.byKey.get(key);
-    if (list && list.length > 0) {
-      const entry = list[0];
-      this.remove(entry);
-      return this.toIntent(entry);
+    if (!list || list.length === 0) return null;
+    const first = list[0];
+    if (list.length === 1) {
+      this.remove(first);
+      return this.toIntent(first);
     }
-
-    const hk = OutgoingEchoRegistry.hashKey(text, hasMedia);
-    const candidates: Entry[] = [];
-    for (const entries of this.byKey.values()) {
-      for (const e of entries) if (e.hashKey === hk && !e.messageId) candidates.push(e);
+    const sameConversation = list.every((e) => e.conversationId === first.conversationId && e.source === first.source && e.isFromAI === first.isFromAI && (e.mediaId ?? null) === (first.mediaId ?? null));
+    if (sameConversation) {
+      this.remove(first);
+      return this.toIntent(first);
     }
-    if (candidates.length === 1) {
-      this.remove(candidates[0]);
-      return this.toIntent(candidates[0]);
+    const sameOrigin = list.every((e) => e.source === first.source && e.isFromAI === first.isFromAI);
+    if (sameOrigin) {
+      this.remove(first);
+      return { ...this.toIntent(first), conversationId: null, mediaId: null };
     }
     return null;
   }
@@ -159,7 +202,8 @@ export class OutgoingEchoRegistry {
   private sweep(): void {
     const t = this.now();
     for (const entry of [...this.byToken.values()]) {
-      if (entry.expiresAt <= t) this.remove(entry);
+      const expired = entry.settled ? entry.expiresAt <= t : t - entry.createdAt >= this.maxPendingMs;
+      if (expired) this.remove(entry);
     }
   }
 }

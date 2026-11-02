@@ -16,7 +16,7 @@ import { emitConversationUpdated, emitConversationNew } from '../utils/conversat
 // WhatsAppSession type is used in model, not directly imported
 import { ConversationService } from './conversation.service';
 import { MessageSource } from '../types';
-import { OutgoingEchoRegistry, OutgoingIntent } from './outgoingEchoRegistry';
+import { OutgoingEchoRegistry, OutgoingIntent, echoTokenStore } from './outgoingEchoRegistry';
 import { echoBindingAppliesTo, echoBindingMode } from '../utils/agentFlags';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
@@ -2554,7 +2554,7 @@ export class WhatsAppService extends EventEmitter {
     // Item 0: consumir o registro do envio antes de qualquer await (o eco do SyncZap é emitido
     // de dentro do sendMessage). Sem registro (ex.: digitado no celular) segue o caminho antigo.
     const intent: OutgoingIntent | null = this.outgoingRegistry.size() > 0
-      ? this.outgoingRegistry.take(msg as any)
+      ? this.outgoingRegistry.take(msg as any, echoTokenStore.getStore())
       : null;
     const inFlightKey = echoBindingMode() !== 'off' ? (msg.id?._serialized || '') : '';
     if (inFlightKey) {
@@ -2631,8 +2631,10 @@ export class WhatsAppService extends EventEmitter {
       let existingMessage = await this.messageModel.findByMessageId(msg.id._serialized);
 
       // Se não encontrou por message_id, verificar por conversation_id + content + direction
-      // Isso cobre o caso onde a mensagem foi salva sem message_id
-      if (!existingMessage && messageBody) {
+      // Isso cobre o caso onde a mensagem foi salva sem message_id.
+      // Com registro de envio (item 0) o eco é de um envio novo e identificado: não deduplicar
+      // por conteúdo (descartaria uma mensagem legítima repetida em menos de 5 s).
+      if (!existingMessage && messageBody && !intent) {
         const recentMessages = await this.messageModel.findByConversationId(conversation.id, 10);
         const now = new Date();
 
@@ -2674,15 +2676,23 @@ export class WhatsAppService extends EventEmitter {
           }
         }
 
-        if (intent && !existingMessage.source) {
-          try {
-            await this.messageModel.update(existingMessage.id, {
-              source: intent.source,
-              ...(intent.isFromAI && !existingMessage.is_from_ai ? { is_from_ai: true } : {}),
-            });
-            existingMessage.source = intent.source;
-          } catch (error: any) {
-            logger.error(`Erro ao atualizar source pelo registro de envio: ${error.message}`);
+        // Registro de envio é a fonte de verdade: reconciliar conversa, source e is_from_ai.
+        // (media_id não: MessageModel.update não grava essa coluna.)
+        if (intent) {
+          const fix: any = {};
+          if (intent.conversationId && conversation?.id === intent.conversationId && existingMessage.conversation_id !== intent.conversationId) {
+            fix.conversation_id = intent.conversationId;
+          }
+          if (existingMessage.source !== intent.source) fix.source = intent.source;
+          if (intent.isFromAI && !existingMessage.is_from_ai) fix.is_from_ai = true;
+          if (Object.keys(fix).length > 0) {
+            try {
+              await this.messageModel.update(existingMessage.id, fix);
+              Object.assign(existingMessage, fix);
+              logger.info(`Mensagem ${existingMessage.id} reconciliada pelo registro de envio: ${JSON.stringify(fix)}`);
+            } catch (error: any) {
+              logger.error(`Erro ao reconciliar mensagem pelo registro de envio: ${error.message}`);
+            }
           }
         }
 
@@ -2766,12 +2776,18 @@ export class WhatsAppService extends EventEmitter {
         return;
       }
 
+      // Item 0: com SyncZap e o registro valendo para este contato, a correlação do eco é exata
+      // (token do envio). Eco sem registro = não foi enviado por este sistema (ex.: celular), então
+      // não consultar o rastreamento antigo por hash de texto, que é global e pode marcar como IA
+      // uma mensagem humana igual a um envio pendente para outro contato.
+      const legacyLookups = !(this.client instanceof SyncZapClient && echoBindingAppliesTo(contactNumber));
+
       // Verificar se a mensagem foi enviada pela IA
       // Primeiro verificar por message_id, depois por conteúdo (para casos de race condition)
-      let isFromAI = this.pendingAIMessages.has(msg.id._serialized);
+      let isFromAI = legacyLookups && this.pendingAIMessages.has(msg.id._serialized);
 
       // Se não encontrou por message_id, tentar por conteúdo (hash temporário)
-      if (!isFromAI && msg.body) {
+      if (legacyLookups && !isFromAI && msg.body) {
         const contentHash = `${msg.body.substring(0, 100)}_${msg.body.length}`;
         isFromAI = this.pendingAIMessages.has(contentHash);
         if (isFromAI) {
@@ -2782,7 +2798,7 @@ export class WhatsAppService extends EventEmitter {
       }
 
       // Se ainda não encontrou e é mensagem de mídia, verificar pelo caption
-      if (!isFromAI && msg.hasMedia) {
+      if (legacyLookups && !isFromAI && msg.hasMedia) {
         const msgData = (msg as any)._data || {};
         const caption = msgData.caption || msg.body || '';
         if (caption) {
@@ -2801,9 +2817,9 @@ export class WhatsAppService extends EventEmitter {
       // Resolver o source explícito da mensagem (ai/automation rastreados via pendingSources).
       // Independente do bloco de isFromAI acima: automação nunca passa por pendingAIMessages,
       // então precisa da própria cadeia message_id -> contentHash -> captionHash.
-      let resolvedSource: MessageSource | undefined = this.pendingSources.get(msg.id._serialized);
+      let resolvedSource: MessageSource | undefined = legacyLookups ? this.pendingSources.get(msg.id._serialized) : undefined;
 
-      if (!resolvedSource && msg.body) {
+      if (legacyLookups && !resolvedSource && msg.body) {
         const contentHash = `${msg.body.substring(0, 100)}_${msg.body.length}`;
         resolvedSource = this.pendingSources.get(contentHash);
         if (resolvedSource) {
@@ -2812,7 +2828,7 @@ export class WhatsAppService extends EventEmitter {
         }
       }
 
-      if (!resolvedSource && msg.hasMedia) {
+      if (legacyLookups && !resolvedSource && msg.hasMedia) {
         const msgData = (msg as any)._data || {};
         const caption = msgData.caption || msg.body || '';
         if (caption) {
@@ -2841,7 +2857,7 @@ export class WhatsAppService extends EventEmitter {
 
       // Buscar media_id se for mensagem de mídia
       let mediaId: number | null = null;
-      if (messageType === 'media') {
+      if (legacyLookups && messageType === 'media') {
         // Tentar buscar por message_id
         mediaId = this.pendingMediaIds.get(msg.id._serialized) || null;
 
@@ -3165,12 +3181,15 @@ export class WhatsAppService extends EventEmitter {
 
       let message: Message;
       try {
-        message = await this.client.sendMessage(chatId, content, { sendSeen: false });
+        const client = this.client;
+        message = echoToken
+          ? await echoTokenStore.run(echoToken, () => client.sendMessage(chatId, content, { sendSeen: false }))
+          : await client.sendMessage(chatId, content, { sendSeen: false });
       } catch (sendError) {
         if (echoToken) this.outgoingRegistry.release(echoToken);
         throw sendError;
       }
-      if (echoToken) this.outgoingRegistry.bindMessageId(echoToken, message?.id?._serialized);
+      if (echoToken) this.outgoingRegistry.settle(echoToken, message?.id?._serialized);
 
       if (!message) {
         logger.warn(`sendMessage: client.sendMessage() retornou vazio para ${contactNumber} (chatId=${chatId}). A entrega pode ter ocorrido, mas não há objeto de mensagem para rastrear.`);
@@ -3313,12 +3332,15 @@ export class WhatsAppService extends EventEmitter {
       // Enviar mídia com caption opcional
       let message: Message;
       try {
-        message = await this.client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false });
+        const client = this.client;
+        message = echoToken
+          ? await echoTokenStore.run(echoToken, () => client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false }))
+          : await client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false });
       } catch (sendError) {
         if (echoToken) this.outgoingRegistry.release(echoToken);
         throw sendError;
       }
-      if (echoToken) this.outgoingRegistry.bindMessageId(echoToken, message?.id?._serialized);
+      if (echoToken) this.outgoingRegistry.settle(echoToken, message?.id?._serialized);
 
       // Se a mídia foi rastreada (IA ou automação), atualizar o Map com o message_id real
       if ((isFromAI || source !== 'human') && message.id) {

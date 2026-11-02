@@ -186,3 +186,83 @@ test('mensagem enviada do celular (sem registro) segue o caminho antigo como hum
   assert.equal(banco.mensagens[0].conversation_id, 8);
   assert.equal(banco.mensagens[0].source, 'human');
 });
+
+// ---- Achados do juiz (02/11/2026) ----
+
+test('juiz 2: mesmo destino e mesmo texto para duas conversas ao mesmo tempo (LID duplicado) não se trocam', async () => {
+  process.env.OUTGOING_ECHO_BINDING = 'on';
+  const { svc, banco } = criarServico();
+  // 8 e 624 têm o mesmo LID; os envios terminam fora de ordem (o 1º demora mais).
+  const fetchOriginal = (globalThis as any).fetch;
+  let n = 0;
+  (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
+    if (url.endsWith('/messages') && init?.method === 'POST') {
+      const atraso = n++ === 0 ? 60 : 5;
+      await new Promise((r) => setTimeout(r, atraso));
+    }
+    return fetchOriginal(url, init);
+  };
+  let r8: any, r624: any;
+  try {
+    [r8, r624] = await Promise.all([
+      svc.sendMessage(FONE, 'Mesmo texto', true, false, LID, 'ai', { conversationId: 8 }),
+      svc.sendMessage(LID.replace('@lid', ''), 'Mesmo texto', false, false, LID, 'automation', { conversationId: 624 }),
+    ]);
+  } finally {
+    (globalThis as any).fetch = fetchOriginal;
+  }
+  await esperar(120);
+  const linha = (id: string) => banco.mensagens.find((m) => m.message_id === id);
+  assert.equal(linha(r8.id._serialized).conversation_id, 8, 'envio da conversa 8 gravado na 8');
+  assert.equal(linha(r8.id._serialized).source, 'ai');
+  assert.equal(linha(r624.id._serialized).conversation_id, 624, 'envio da conversa 624 gravado na 624');
+  assert.equal(linha(r624.id._serialized).source, 'automation');
+});
+
+test('juiz 1: mensagem igual digitada no celular durante um envio não rouba o registro', async () => {
+  process.env.OUTGOING_ECHO_BINDING = 'on';
+  const { svc, banco } = criarServico();
+  const fetchOriginal = (globalThis as any).fetch;
+  (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
+    if (url.endsWith('/messages') && init?.method === 'POST') {
+      // enquanto o envio da IA para a conversa 8 está pendente, o celular manda o mesmo texto ao cliente
+      client.onMessage({ payload: { origin: 'device', from: { phone_jid: `${FONE_CLIENTE}@s.whatsapp.net` }, text: 'Ok!', wa_message_id: 'dev-2' } });
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return fetchOriginal(url, init);
+  };
+  try {
+    await svc.sendMessage(FONE, 'Ok!', true, false, LID, 'ai', { conversationId: 8 });
+  } finally {
+    (globalThis as any).fetch = fetchOriginal;
+  }
+  await esperar(80);
+  const dev = banco.mensagens.find((m) => m.message_id === 'dev-2');
+  const ia = banco.mensagens.find((m) => m.message_id !== 'dev-2');
+  assert.equal(dev.conversation_id, 50, 'mensagem do celular fica na conversa do cliente');
+  assert.equal(dev.source, 'human');
+  assert.equal(ia.conversation_id, 8);
+  assert.equal(ia.source, 'ai');
+});
+
+test('juiz 5: mesma resposta repetida em menos de 5 s com outro id não é descartada', async () => {
+  process.env.OUTGOING_ECHO_BINDING = 'on';
+  const { svc, banco } = criarServico();
+  await svc.sendMessage(FONE, 'Pode repetir?', true, false, LID, 'ai', { conversationId: 8 });
+  await svc.sendMessage(FONE, 'Pode repetir?', true, false, LID, 'ai', { conversationId: 8 });
+  await esperar();
+  assert.equal(banco.mensagens.length, 2);
+});
+
+test('juiz 4: linha já gravada na conversa errada é corrigida pelo registro', async () => {
+  process.env.OUTGOING_ECHO_BINDING = 'on';
+  const { svc, banco } = criarServico();
+  // simula gravação anterior errada do mesmo message_id (ex.: eco processado pelo caminho antigo)
+  banco.mensagens.push({ id: 99, conversation_id: 624, message_id: 'wamid-' + nextWaId, content: 'Corrigir', direction: 'outgoing', is_from_ai: false, source: 'human', created_at: new Date() });
+  await svc.sendMessage(FONE, 'Corrigir', true, false, LID, 'ai', { conversationId: 8 });
+  await esperar();
+  assert.equal(banco.mensagens.length, 1);
+  assert.equal(banco.mensagens[0].conversation_id, 8);
+  assert.equal(banco.mensagens[0].source, 'ai');
+  assert.equal(banco.mensagens[0].is_from_ai, true);
+});

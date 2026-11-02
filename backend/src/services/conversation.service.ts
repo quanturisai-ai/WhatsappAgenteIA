@@ -237,7 +237,10 @@ export class ConversationService {
         // o que já era; marcamos precisa-intervenção para o atendente ser avisado.
         logger.error(`Erro ao gerar resposta via RAG para conversa ${conversationId}: ${ragError.message}`);
         const ctx = currentTurn();
-        if (ctx) ctx.outcome = 'erro_geracao';
+        if (ctx) {
+          // No timeout a chamada ao LLM ainda está em andamento e não entra na linha do turno.
+          ctx.outcome = (ragError.message || '').startsWith('Timeout ao processar mensagem com RAG') ? 'timeout_geracao' : 'erro_geracao';
+        }
         await this.conversationModel.update(conversationId, {
           needs_intervention: true,
         });
