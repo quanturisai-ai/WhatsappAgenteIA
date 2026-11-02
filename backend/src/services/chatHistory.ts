@@ -6,7 +6,7 @@
  * - Mensagens seguidas do mesmo lado são juntadas numa só (o modelo vê a conversa alternada).
  * - O lote atual (mensagens que este turno vai responder) NÃO entra no histórico: ele vai uma
  *   vez só, na última mensagem `user`. Com os IDs do lote (agendador), o histórico é cortado na
- *   1ª mensagem do lote; sem IDs, retira as últimas mensagens do cliente que já estão no texto atual.
+ *   1ª mensagem do lote; sem IDs, retira o último bloco do cliente se for exatamente o fim do texto atual.
  */
 
 export interface ChatMessage {
@@ -33,6 +33,31 @@ function rowText(row: HistoryRow): string {
   return row.message_type ? `[${row.message_type}]` : '';
 }
 
+const linhas = (t: string) => t.split('\n').map((l) => l.trim()).filter(Boolean);
+
+/**
+ * Sem IDs (debounce antigo/teste): retira o último bloco de mensagens do cliente se ele for
+ * exatamente o final do texto atual (linha a linha). Pode pular até 3 envios da empresa no fim
+ * (ex.: mídia obrigatória enviada antes da resposta), que ficam no histórico.
+ */
+function withoutTrailingBatch(rows: HistoryRow[], currentText: string): HistoryRow[] {
+  const atual = linhas(currentText);
+  if (atual.length === 0) return [...rows];
+  let end = rows.length;
+  let skipped = 0;
+  while (end > 0 && rows[end - 1].direction !== 'incoming' && skipped < 3) { end--; skipped++; }
+  let start = end;
+  while (start > 0 && rows[start - 1].direction === 'incoming') start--;
+  // maior k: as últimas k mensagens do cliente formam exatamente o fim do texto atual
+  for (let from = start; from < end; from++) {
+    const bloco = rows.slice(from, end).flatMap((r) => linhas(rowText(r)));
+    if (bloco.length === 0 || bloco.length > atual.length) continue;
+    const fim = atual.slice(atual.length - bloco.length);
+    if (bloco.every((l, i) => l === fim[i])) return [...rows.slice(0, from), ...rows.slice(end)];
+  }
+  return [...rows];
+}
+
 /** Linhas do banco (ordem cronológica) que entram no histórico, sem o lote atual. */
 export function historyRowsBeforeBatch(rows: HistoryRow[], currentText: string, batch: BatchIds = {}, maxMessages = 30): HistoryRow[] {
   const dbIds = new Set((batch.batchDbIds || []).filter((v) => typeof v === 'number'));
@@ -43,19 +68,14 @@ export function historyRowsBeforeBatch(rows: HistoryRow[], currentText: string, 
   let kept: HistoryRow[];
   if (dbIds.size > 0 || msgIds.size > 0) {
     const first = rows.findIndex(inBatch);
-    // Corta na 1ª mensagem do lote: o que veio depois dela é o próprio lote ou mensagem que
-    // ainda está na fila (vai no próximo turno).
-    kept = first >= 0 ? rows.slice(0, first) : rows.filter((r) => !inBatch(r));
+    // Corta na 1ª mensagem do lote: as do cliente depois dela são o próprio lote ou mensagens que
+    // ainda estão na fila (vão no próximo turno). Envios da empresa depois dela (ex.: mídia
+    // obrigatória deste turno) continuam no histórico.
+    kept = first >= 0
+      ? [...rows.slice(0, first), ...rows.slice(first).filter((r) => r.direction !== 'incoming')]
+      : rows.filter((r) => !inBatch(r));
   } else {
-    // Sem IDs (chamada antiga/teste): retira as últimas mensagens do cliente já contidas no texto atual.
-    kept = [...rows];
-    const atual = currentText.trim();
-    while (kept.length > 0) {
-      const last = kept[kept.length - 1];
-      const t = rowText(last);
-      if (last.direction === 'incoming' && t && atual.includes(t)) kept.pop();
-      else break;
-    }
+    kept = withoutTrailingBatch(rows, currentText);
   }
   return maxMessages > 0 ? kept.slice(-maxMessages) : kept;
 }

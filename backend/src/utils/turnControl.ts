@@ -10,6 +10,12 @@ export interface TurnControl {
   epoch: number;
   signal: AbortSignal;
   isCurrent(): boolean;
+  /**
+   * Confere e "fecha" o turno para envio: se ainda é o atual, marca como enviando e devolve true;
+   * a partir daí mensagem nova não cancela mais este turno (vira o próximo turno), para nunca
+   * descartar um turno que já começou a mandar coisas ao cliente (evita resposta duplicada).
+   */
+  commit(): boolean;
 }
 
 const store = new AsyncLocalStorage<TurnControl>();

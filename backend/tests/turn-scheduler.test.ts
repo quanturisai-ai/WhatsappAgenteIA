@@ -20,7 +20,7 @@ const FONE = '5561900000001';
 
 function cfg(over: Partial<SchedulerConfig> = {}, loop: Partial<SchedulerConfig['antiLoop']> = {}): SchedulerConfig {
   return {
-    baseMs: 50, greetingMs: 120, maxMs: 200,
+    baseMs: 50, greetingMs: 120, maxMs: 200, turnDeadlineMs: 5000, holdMaxMs: 1000,
     ...over,
     antiLoop: { enabled: false, maxIn: 8, inWindowMs: 2000, maxOut: 20, outWindowMs: 5000, cooldownMs: 10000, ...loop },
   };
@@ -37,7 +37,7 @@ function turnoFalso(ms = 0) {
     maxAtivos = Math.max(maxAtivos, ativos);
     try {
       if (ms) await new Promise<void>((r) => { const t = setTimeout(r, ms); control.signal.addEventListener('abort', () => { clearTimeout(t); r(); }); });
-      const result: TurnResult = control.isCurrent() ? 'sent' : 'superseded';
+      const result: TurnResult = control.commit() ? 'sent' : 'superseded';
       turnos.push({ batch, result, at: Date.now() - t0 });
       return result;
     } finally {
@@ -47,7 +47,7 @@ function turnoFalso(ms = 0) {
   return { run, turnos, maxAtivos: () => maxAtivos };
 }
 
-test('saudação curta: até 3 palavras e sem "?"', () => {
+test('saudação curta: até 3 palavras de saudação e sem "?"', () => {
   assert.equal(isShortGreeting(['Oi']), true);
   assert.equal(isShortGreeting(['Bom dia']), true);
   assert.equal(isShortGreeting(['boa tarde tudo bem']), false);
@@ -56,6 +56,11 @@ test('saudação curta: até 3 palavras e sem "?"', () => {
   assert.equal(isShortGreeting(['Quanto custa a lavagem']), false);
   assert.equal(isShortGreeting(['[media]']), false);
   assert.equal(isShortGreeting(['']), false);
+  // juiz: pedido curto não é saudação
+  assert.equal(isShortGreeting(['Quero orçamento']), false);
+  assert.equal(isShortGreeting(['Preciso de ajuda']), false);
+  assert.equal(isShortGreeting(['Oiii!!']), true);
+  assert.equal(isShortGreeting(['Olá, boa noite']), true);
 });
 
 test('debounce: pergunta espera a janela base; saudação curta espera mais', async () => {
@@ -78,9 +83,9 @@ test('debounce: teto desde a 1ª mensagem mesmo com cliente digitando sem parar'
   const t0 = Date.now();
   for (let i = 0; i < 8; i++) { s.enqueue(1, { content: `parte ${i} da pergunta longa`, dbId: i }); await esperar(35); }
   // 8 x 35 ms = 280 ms > teto de 200 ms: o 1º turno tem que ter saído perto dos 200 ms.
-  assert.ok(f.turnos.length >= 1, 'tinha que ter disparado pelo teto');
-  assert.ok(f.turnos[0].at <= 260, `disparou tarde demais: ${f.turnos[0].at} ms`);
   await s.idle(1);
+  assert.ok(f.turnos.length >= 2, 'tinha que ter disparado pelo teto antes da última mensagem');
+  assert.ok(f.turnos[0].batch.length < 8, `o 1º lote esperou todas: ${f.turnos[0].batch.length}`);
   const todos = f.turnos.flatMap((t) => t.batch.map((b) => b.dbId));
   assert.deepEqual(todos, [0, 1, 2, 3, 4, 5, 6, 7], 'nenhuma mensagem perdida nem repetida');
   assert.ok(Date.now() - t0 < 1000);
@@ -169,6 +174,120 @@ test('anti-loop desligado (ANTILOOP=off) não dispara', async () => {
   assert.equal(f.turnos[0].batch.length, 15);
 });
 
+// ---------- Correções do juiz (02/11/2026) ----------
+
+test('juiz #1: reserva cancela o turno na hora e segura a fila até a mensagem (áudio) entrar, na ordem de chegada', async () => {
+  const f = turnoFalso(150);
+  const s = new TurnScheduler(f.run, () => {}, () => cfg());
+  s.enqueue(1, { content: 'texto 1', messageId: 'a' });
+  await esperar(70); // turno em andamento
+  const tAudio = Date.now();
+  const release = s.hold(1); // chegou um áudio: ainda transcrevendo
+  await esperar(10);
+  s.enqueue(1, { content: 'texto 2 (veio depois do áudio)', messageId: 'c' });
+  await esperar(150); // mesmo passando a janela base, não dispara com a reserva aberta
+  assert.equal(f.turnos.filter((t) => t.result === 'sent').length, 0, 'não respondeu sem o áudio');
+  s.enqueue(1, { content: 'áudio transcrito', messageId: 'b', at: tAudio });
+  release();
+  await s.idle(1);
+  const enviados = f.turnos.filter((t) => t.result === 'sent');
+  assert.equal(enviados.length, 1);
+  assert.deepEqual(enviados[0].batch.map((b) => b.messageId), ['a', 'b', 'c'], 'áudio antes do texto que chegou depois');
+  assert.equal(f.turnos[0].result, 'superseded', 'o turno em andamento foi cancelado já na reserva');
+});
+
+test('juiz #1: reserva expira sozinha (mensagem descartada ou travada no download)', async () => {
+  const f = turnoFalso();
+  const s = new TurnScheduler(f.run, () => {}, () => cfg({ holdMaxMs: 100 }));
+  s.enqueue(1, { content: 'pergunta?' });
+  s.hold(1); // nunca liberada
+  await esperar(80);
+  assert.equal(f.turnos.length, 0);
+  await esperar(120);
+  assert.equal(f.turnos.length, 1, 'disparou depois que a reserva expirou');
+});
+
+test('juiz #2: depois do commit (enviando) mensagem nova não cancela; vira o próximo turno', async () => {
+  const lotes: string[][] = [];
+  let abortado = false;
+  const run = async (_c: number, batch: PendingItem[], control: TurnControl): Promise<TurnResult> => {
+    await esperar(30);
+    if (!control.commit()) return 'superseded';
+    control.signal.addEventListener('abort', () => { abortado = true; });
+    await esperar(100); // "enviando"
+    lotes.push(batch.map((b) => b.content));
+    return 'sent';
+  };
+  const s = new TurnScheduler(run, () => {}, () => cfg());
+  s.enqueue(1, { content: 'primeira?' });
+  await esperar(110); // turno já passou do commit
+  s.enqueue(1, { content: 'segunda?' });
+  s.hold(1)();
+  await s.idle(1);
+  assert.equal(abortado, false, 'o envio em andamento não foi abortado');
+  assert.deepEqual(lotes, [['primeira?'], ['segunda?']]);
+});
+
+test('juiz #3: turno pendurado libera a trava no prazo, avisa e não atropela o turno seguinte', async () => {
+  const travados: number[] = [];
+  let chamadas = 0;
+  let soltarPendurado: (v: TurnResult) => void = () => {};
+  const lotes: string[][] = [];
+  const run = async (_c: number, batch: PendingItem[], control: TurnControl): Promise<TurnResult> => {
+    chamadas++;
+    if (chamadas === 1) {
+      control.commit();
+      return new Promise<TurnResult>((r) => { soltarPendurado = r; }); // envio pendurado
+    }
+    await esperar(80);
+    lotes.push(batch.map((b) => b.content));
+    return control.commit() ? 'sent' : 'superseded';
+  };
+  const s = new TurnScheduler(run, () => {}, () => cfg({ turnDeadlineMs: 150 }), Date.now, (c) => { travados.push(c); });
+  s.enqueue(1, { content: 'primeira?' });
+  await esperar(250);
+  assert.deepEqual(travados, [1], 'avisou o turno travado');
+  assert.equal(s.snapshot(1).running, false, 'trava liberada');
+  s.enqueue(1, { content: 'segunda?' });
+  await esperar(70); // 2º turno rodando
+  soltarPendurado('sent'); // o pendurado termina atrasado
+  await esperar(5);
+  assert.equal(s.snapshot(1).running, true, 'o turno atrasado não liberou a trava do turno novo');
+  await s.idle(1);
+  assert.deepEqual(lotes, [['segunda?']]);
+});
+
+test('juiz #4: teto continua contando da 1ª mensagem depois de refazer', async () => {
+  const f = turnoFalso(60);
+  const s = new TurnScheduler(f.run, () => {}, () => cfg({ baseMs: 50, maxMs: 150 }));
+  const t0 = Date.now();
+  s.enqueue(1, { content: 'm1?' });            // dispara ~50
+  await esperar(80);
+  s.enqueue(1, { content: 'm2?' });            // cancela; refaz
+  await esperar(40);
+  s.enqueue(1, { content: 'm3?' });            // ~120: sem teto preservado esperaria até ~170+
+  await esperar(20);
+  s.enqueue(1, { content: 'm4?' });            // ~140
+  await s.idle(1);
+  const enviado = f.turnos.find((t) => t.result === 'sent')!;
+  assert.deepEqual(enviado.batch.map((b) => b.content), ['m1?', 'm2?', 'm3?', 'm4?']);
+  // teto: 150 ms da 1ª mensagem + duração do turno (60 ms); sem o teto seria ≥ 140 + 50 + 60
+  assert.ok(enviado.at - (t0 - t0) <= 235, `saiu tarde: ${enviado.at} ms`);
+});
+
+test('juiz #8: estado de conversa ociosa é removido', async () => {
+  let agora = 1_000_000;
+  const f = turnoFalso();
+  const s = new TurnScheduler(f.run, () => {}, () => cfg({ baseMs: 0 }, { inWindowMs: 1000, outWindowMs: 1000 }), () => agora);
+  s.enqueue(1, { content: 'oi?' });
+  await s.idle(1);
+  assert.equal(s.snapshot(1).tracked, true);
+  agora += 120_000;
+  s.enqueue(2, { content: 'outra conversa?' });
+  assert.equal(s.snapshot(1).tracked, false, 'conversa 1 ociosa foi removida');
+  await s.idle(2);
+});
+
 // ---------- ConversationService real: epoch conferido antes do envio + cancelamento do LLM ----------
 
 function criarConversa() {
@@ -192,7 +311,7 @@ test('ConversationService: epoch mudou depois da geração -> não envia e não 
   const { svc, whatsapp, enviados, updates } = criarConversa();
   let epochAtual = 1;
   const ac = new AbortController();
-  const control: TurnControl = { epoch: 1, signal: ac.signal, isCurrent: () => epochAtual === 1 };
+  const control: TurnControl = { epoch: 1, signal: ac.signal, isCurrent: () => epochAtual === 1, commit: () => epochAtual === 1 };
   svc.ragService = { processMessageAndRespond: async () => { epochAtual = 2; return 'Abrimos sim!'; } };
   const r = await svc.processIncomingMessage(1, 7, 'Abrem domingo?', whatsapp, { control });
   assert.equal(r, 'superseded');
@@ -218,7 +337,7 @@ test('ConversationService: mensagem nova aborta a chamada ao LLM em andamento (s
   svc.ragService.agentConfigModel = { findByUserId: async () => ({}) };
   svc.ragService.conversationModel = svc.conversationModel;
   const ac = new AbortController();
-  const control: TurnControl = { epoch: 1, signal: ac.signal, isCurrent: () => !ac.signal.aborted };
+  const control: TurnControl = { epoch: 1, signal: ac.signal, isCurrent: () => !ac.signal.aborted, commit: () => !ac.signal.aborted };
   setTimeout(() => ac.abort(), 50);
   const t0 = Date.now();
   const r = await svc.processIncomingMessage(1, 7, 'Abrem domingo?', whatsapp, { control });

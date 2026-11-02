@@ -169,10 +169,13 @@ export class ConversationService {
     );
   }
 
-  /** Item 2: o turno foi substituído por mensagem nova? (sem agendador, nunca) */
+  /**
+   * Item 2: o turno foi substituído por mensagem nova? (sem agendador, nunca)
+   * Se não foi, fecha o turno para envio (commit): daqui em diante ele não é mais cancelado.
+   */
   private superseded(turnMeta: TurnMeta, conversationId: number, where: string): boolean {
     const control = turnMeta.control;
-    if (!control || control.isCurrent()) return false;
+    if (!control || control.commit()) return false;
     logger.info(`[turnos] Conversa ${conversationId}: turno descartado (${where}), mensagem nova chegou; será refeito com tudo junto`);
     const ctx = currentTurn();
     if (ctx) ctx.outcome = 'substituido';

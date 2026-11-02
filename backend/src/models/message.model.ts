@@ -95,7 +95,7 @@ export class MessageModel {
                  FROM messages
                  WHERE conversation_id = ? 
                    AND created_at >= ?
-                 ORDER BY created_at DESC 
+                 ORDER BY created_at DESC, id DESC
                  LIMIT ?`;
         params = [conversationId, maxAgeDate, limit];
       } else {
@@ -103,7 +103,7 @@ export class MessageModel {
         query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source, created_at, received_at, read_at
                  FROM messages
                  WHERE conversation_id = ? 
-                 ORDER BY created_at DESC 
+                 ORDER BY created_at DESC, id DESC
                  LIMIT ?`;
         params = [conversationId, limit];
       }

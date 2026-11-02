@@ -83,7 +83,9 @@ export class WhatsAppService extends EventEmitter {
   readonly turnScheduler = new TurnScheduler(
     (conversationId, batch, control, info) => this.runScheduledTurn(conversationId, batch, control, info),
     (conversationId, reason) => this.handleTurnLoop(conversationId, reason),
-    () => schedulerConfigFromEnv(envInt, antiLoopEnabled())
+    () => schedulerConfigFromEnv(envInt, antiLoopEnabled()),
+    Date.now,
+    (conversationId, ms) => this.handleStuckTurn(conversationId, ms)
   );
   // Contador de erros consecutivos no keep-alive
   private keepAliveErrorCount: number = 0;
@@ -2274,6 +2276,9 @@ export class WhatsAppService extends EventEmitter {
   }
 
   private async handleIncomingMessage(msg: Message): Promise<void> {
+    // Item 2: hora de chegada (ordem da fila) e reserva da conversa no agendador.
+    const arrivedAt = Date.now();
+    let releaseHold: (() => void) | null = null;
     try {
       // Ignorar mensagens de status
       if (msg.isStatus) {
@@ -2309,6 +2314,17 @@ export class WhatsAppService extends EventEmitter {
       if (!contactNumber) {
         logger.warn(`Não foi possível extrair número do contato da mensagem. msg.from=${msg.from}`);
         return;
+      }
+
+      // Item 2: antes de baixar/transcrever mídia, reserva a conversa no agendador (cancela o turno
+      // que ainda não enviou e segura a fila até esta mensagem entrar nela, na ordem de chegada).
+      if (turnSchedulerAppliesTo(contactNumber)) {
+        try {
+          const known = await this.conversationModel.findByUserOrLid(this.userId, contactNumber, lid);
+          if (known) releaseHold = this.turnScheduler.hold(known.id);
+        } catch (err: any) {
+          logger.warn(`[turnos] Não foi possível reservar a conversa de ${contactNumber}: ${err?.message || err}`);
+        }
       }
 
       // Preparar conteúdo para log e salvamento (áudios serão transcritos abaixo)
@@ -2512,6 +2528,7 @@ export class WhatsAppService extends EventEmitter {
           messageId: msg.id?._serialized,
           dbId: savedMessage?.id ?? undefined,
           content: messageBody || `[${messageType}]`,
+          at: arrivedAt,
         });
         return;
       }
@@ -2565,6 +2582,8 @@ export class WhatsAppService extends EventEmitter {
       logger.error(`Erro ao processar mensagem recebida: ${error.message}`);
       // NÃO lançar erro -apenas logar para evitar crash
       // throw error;
+    } finally {
+      if (releaseHold) releaseHold();
     }
   }
 
@@ -2594,6 +2613,16 @@ export class WhatsAppService extends EventEmitter {
    * Item 2 (ANTILOOP=on): rajada de mensagens ou de respostas. Pausa a IA da conversa, marca
    * intervenção e avisa os atendentes (aviso interno; nada é enviado ao cliente).
    */
+  /** Item 2: turno passou do prazo (ex.: envio pendurado). Trava liberada; marca intervenção. */
+  private async handleStuckTurn(conversationId: number, ms: number): Promise<void> {
+    logger.error(`[turnos] Turno travado na conversa ${conversationId} (${Math.round(ms / 1000)} s); marcando intervenção`);
+    try {
+      await this.conversationModel.update(conversationId, { needs_intervention: true });
+    } catch (error: any) {
+      logger.error(`[turnos] Não foi possível marcar intervenção na conversa ${conversationId}: ${error.message}`);
+    }
+  }
+
   private async handleTurnLoop(conversationId: number, reason: string): Promise<void> {
     try {
       await this.conversationService.pauseAutoResponding(conversationId);

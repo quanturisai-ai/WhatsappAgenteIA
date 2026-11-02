@@ -83,3 +83,24 @@ test('chat de teste do painel: Cliente/Agente -> user/assistant, sem repetir a a
   ], 'Preço?');
   assert.deepEqual(out, [{ role: 'user', content: 'Oi' }, { role: 'assistant', content: 'Olá!' }]);
 });
+
+// ---------- Correções do juiz (02/11/2026) ----------
+
+test('juiz #5: sem IDs, mensagem anterior que é só parte do texto atual NÃO some do histórico', () => {
+  const rows = [r(1, 'outgoing', 'Olá!'), r(2, 'incoming', 'sim'), r(3, 'outgoing', 'Confirmado.'), r(4, 'incoming', 'sim, quero mais um')];
+  // texto atual = só a última; "sim" (linha 2) é substring mas não é o fim exato do texto
+  assert.deepEqual(historyRowsBeforeBatch(rows, 'sim, quero mais um').map((k) => k.id), [1, 2, 3]);
+  // bloco incoming no fim que não bate exatamente com o texto atual: fica
+  assert.deepEqual(historyRowsBeforeBatch([r(1, 'incoming', 'sim')], 'sim, claro').map((k) => k.id), [1]);
+});
+
+test('juiz #5: sem IDs, mídia obrigatória enviada depois do lote não impede retirar o lote', () => {
+  const rows = [r(1, 'incoming', 'Oi'), r(2, 'outgoing', 'Olá!'), r(3, 'incoming', 'Quanto custa'), r(4, 'incoming', 'a secagem?'), { id: 5, direction: 'outgoing', content: '', message_type: 'image' }];
+  const kept = historyRowsBeforeBatch(rows, 'Quanto custa\na secagem?');
+  assert.deepEqual(kept.map((k) => k.id), [1, 2, 5]);
+});
+
+test('com IDs: envio da empresa depois do lote (mídia obrigatória) continua no histórico; fila não', () => {
+  const rows = [r(1, 'incoming', 'a'), r(2, 'outgoing', 'b'), r(3, 'incoming', 'lote'), { id: 4, direction: 'outgoing', content: '', message_type: 'image' }, r(5, 'incoming', 'na fila')];
+  assert.deepEqual(historyRowsBeforeBatch(rows, 'lote', { batchDbIds: [3] }).map((k) => k.id), [1, 2, 4]);
+});
