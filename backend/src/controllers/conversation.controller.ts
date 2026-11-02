@@ -7,7 +7,8 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { MediaModel } from '../models/media.model';
 import logger from '../utils/logger';
-import { isTestNumber, turnSchedulerAppliesTo } from '../utils/agentFlags';
+import { deveDescreverMidia, isTestNumber, turnSchedulerAppliesTo } from '../utils/agentFlags';
+import { descreverMidiaRecebida } from '../services/midiaTurno';
 import { emitConversationNew, emitConversationUpdated } from '../utils/conversationSocketEmitter';
 
 const conversationService = new ConversationService();
@@ -794,6 +795,84 @@ export const simulateIncomingForTest = async (
     const t0 = Date.now();
     await conversationService.processIncomingMessage(userId, conversationId, content, whatsappService);
     res.json({ ok: true, ms: Date.now() - t0 });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Item 5: igual ao simulate-incoming com viaScheduler, mas com uma foto/vídeo (corpo binário,
+ * Content-Type: application/octet-stream; tipo no cabeçalho X-Mimetype; legenda opcional em
+ * X-Legenda, codificada em URI). Grava a mídia como recebida (uploads/incoming), a mensagem como
+ * do cliente e põe na fila do agendador, como uma mídia real. Mesmas travas: AGENTE_TEST_ENDPOINT=on
+ * e só conversa de AGENTE_TEST_NUMBERS.
+ */
+export const simulateIncomingMediaForTest = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if ((process.env.AGENTE_TEST_ENDPOINT || 'off').trim().toLowerCase() !== 'on') {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const userId = req.userId!;
+    const conversationId = parseInt(req.params.id, 10);
+    const buffer: Buffer | null = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
+    const mimetype = String(req.headers['x-mimetype'] || '').trim().toLowerCase();
+    if (!conversationId || !buffer || !/^(image|video)\/[a-z0-9.+-]+$/.test(mimetype)) {
+      res.status(400).json({ error: 'conversationId, corpo binário e X-Mimetype image/* ou video/* são obrigatórios' });
+      return;
+    }
+    let legenda = '';
+    try {
+      legenda = decodeURIComponent(String(req.headers['x-legenda'] || '')).trim().slice(0, 1000);
+    } catch {
+      legenda = '';
+    }
+    const conversation = await conversationModel.findById(conversationId);
+    if (!conversation || conversation.user_id !== userId) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    if (!isTestNumber(conversation.contact_number)) {
+      logger.warn(`[simulate-incoming-media] Recusado: conversa ${conversationId} não é de número de teste`);
+      res.status(403).json({ error: 'Só para conversas de AGENTE_TEST_NUMBERS' });
+      return;
+    }
+    if (!turnSchedulerAppliesTo(conversation.contact_number)) {
+      res.status(400).json({ error: 'TURN_SCHEDULER não está ligado para esta conversa' });
+      return;
+    }
+    const whatsappService: any = WhatsAppManager.getInstance().getServiceSync(userId);
+    if (!whatsappService) {
+      res.status(400).json({ error: 'WhatsApp não está conectado' });
+      return;
+    }
+    const mediaId: number | null = await whatsappService.saveIncomingMedia(buffer, mimetype);
+    if (!mediaId) {
+      res.status(500).json({ error: 'Falha ao gravar a mídia' });
+      return;
+    }
+    const messageId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const content = legenda || '[media]';
+    const saved = await messageModel.create({
+      conversation_id: conversationId,
+      message_id: messageId,
+      content,
+      message_type: 'media',
+      media_id: mediaId,
+      direction: 'incoming',
+      is_from_ai: false,
+      source: 'client',
+    } as any);
+    if (saved?.id && deveDescreverMidia(conversation.contact_number)) {
+      void descreverMidiaRecebida(Number(saved.id), Number(mediaId));
+    }
+    whatsappService.turnScheduler.enqueue(conversationId, { messageId, dbId: saved?.id, content });
+    logger.info(`[simulate-incoming-media] Mídia de teste na fila (conversa ${conversationId}, msg ${saved?.id}, mídia ${mediaId}, ${buffer.length} bytes)`);
+    res.json({ ok: true, queued: true, messageDbId: saved?.id ?? null, mediaId });
   } catch (error) {
     next(error);
   }

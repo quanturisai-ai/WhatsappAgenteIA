@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import {
   listConversations,
   getConversation,
@@ -13,6 +13,7 @@ import {
   sendMedia,
   createConversation,
   simulateIncomingForTest,
+  simulateIncomingMediaForTest,
 } from '../controllers/conversation.controller';
 import { authenticateToken } from '../middleware/auth';
 
@@ -35,6 +36,8 @@ router.post('/send', sendMessage);
 router.post('/send-media', sendMedia);
 // Teste de ponta a ponta (AGENTE_TEST_ENDPOINT=on, só números de teste)
 router.post('/:id/simulate-incoming', simulateIncomingForTest);
+// Item 5: mídia de teste (binário até 25 MB; só com AGENTE_TEST_ENDPOINT=on e número de teste).
+router.post('/:id/simulate-incoming-media', express.raw({ type: 'application/octet-stream', limit: '25mb' }), simulateIncomingMediaForTest);
 
 export default router;
 
