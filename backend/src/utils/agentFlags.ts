@@ -118,3 +118,67 @@ export function envInt(name: string, fallback: number, min = 0): number {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= min ? n : fallback;
 }
+
+/**
+ * RAG_ENABLED (item 4): true (padrão, antigo) = prompt com busca RAG por turno; test = os números de
+ * AGENTE_TEST_NUMBERS usam o system fixo do agente.yaml (base inteira, sem RAG) e os demais o antigo;
+ * false = todos usam o system fixo. O chat de teste do painel (sem número) só no modo false.
+ */
+export function ragEnabledMode(): 'true' | 'test' | 'false' {
+  const v = (process.env.RAG_ENABLED || 'true').trim().toLowerCase();
+  if (v === 'false' || v === 'off' || v === '0') return 'false';
+  if (v === 'test') return 'test';
+  return 'true';
+}
+/** O system fixo do agente.yaml (sem RAG) vale para este contato? */
+export function agenteYamlAppliesTo(contactNumber: string | null | undefined): boolean {
+  const mode = ragEnabledMode();
+  if (mode === 'false') return true;
+  if (mode === 'test') return isTestNumber(contactNumber);
+  return false;
+}
+
+/**
+ * OPENROUTER_PAYLOAD (item 4): v1 (padrão, antigo) | v2 = JSON nas boas práticas: session_id por
+ * conversa, sem usage.include (obsoleto), sem top_k/repetition_penalty, max_tokens por env.
+ */
+export function openrouterPayloadV2(): boolean {
+  return (process.env.OPENROUTER_PAYLOAD || 'v1').trim().toLowerCase() === 'v2';
+}
+
+function envNum(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * OPENROUTER_PROVIDER_MODE (item 4), roteamento de fornecedor:
+ * - vazio/sort (padrão, antigo): { sort: OPENROUTER_PROVIDER_SORT || 'throughput' };
+ * - default: sem objeto provider (roteamento balanceado do OpenRouter);
+ * - price: sort por preço + preferências de latência/throughput (não bloqueiam) + max_price (bloqueia).
+ */
+export function openrouterProviderMode(): 'sort' | 'default' | 'price' {
+  const v = (process.env.OPENROUTER_PROVIDER_MODE || 'sort').trim().toLowerCase();
+  if (v === 'default' || v === 'price') return v;
+  return 'sort';
+}
+export function openrouterProviderConfig(): Record<string, any> | undefined {
+  const mode = openrouterProviderMode();
+  if (mode === 'default') return undefined;
+  if (mode === 'sort') return { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' };
+  const p: Record<string, any> = { sort: 'price' };
+  const lat = envNum('OPENROUTER_PREFERRED_MAX_LATENCY_P90');
+  if (lat !== undefined) p.preferred_max_latency = { p90: lat };
+  const thr = envNum('OPENROUTER_PREFERRED_MIN_THROUGHPUT_P90');
+  if (thr !== undefined) p.preferred_min_throughput = { p90: thr };
+  const mp = envNum('OPENROUTER_MAX_PRICE_PROMPT');
+  const mc = envNum('OPENROUTER_MAX_PRICE_COMPLETION');
+  if (mp !== undefined || mc !== undefined) {
+    p.max_price = {};
+    if (mp !== undefined) p.max_price.prompt = mp;
+    if (mc !== undefined) p.max_price.completion = mc;
+  }
+  return p;
+}

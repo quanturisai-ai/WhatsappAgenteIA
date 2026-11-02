@@ -12,7 +12,9 @@ import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
-import { envInt, historyMessagesAppliesTo, historyMessagesMode } from '../utils/agentFlags';
+import { agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, ragEnabledMode } from '../utils/agentFlags';
+import { currentTurn } from '../utils/turnMetrics';
+import { buildContextoTurno, buildSystemFixo, dataHoraMinuto, loadAgenteYaml, mensagemFinal } from './agentePrompt';
 import {
   ChatMessage,
   buildChatMessages,
@@ -29,6 +31,8 @@ const CONTINUIDADE_MENSAGENS = `Dê continuidade à conversa respondendo à últ
 export interface TurnBatchInfo {
   batchDbIds?: number[];
   batchMessageIds?: string[];
+  /** Item 4: remetente é dono/atendente (inclui no system os tópicos reservados, ex.: #contatoia). */
+  contatoiaAutorizado?: boolean;
 }
 
 export class RAGService {
@@ -502,6 +506,79 @@ export class RAGService {
   }
 
   /**
+   * Item 4 (RAG_ENABLED=false/test): esta conversa usa o system fixo do agente.yaml (sem RAG)?
+   * Chat de teste do painel (conversationId 0) só no modo false.
+   */
+  private async useAgenteYaml(conversationId: number): Promise<boolean> {
+    const mode = ragEnabledMode();
+    if (mode === 'true') return false;
+    if (conversationId <= 0) return mode === 'false';
+    if (mode === 'false') return true;
+    try {
+      const conversation = await this.conversationModel.findById(conversationId);
+      return agenteYamlAppliesTo(conversation?.contact_number);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Item 4: [system fixo: agente.yaml + painel + base inteira] + histórico user/assistant +
+   * [user: contexto do turno + mensagem atual]. Sem RAG (nenhum embedding no turno).
+   */
+  private async buildAgenteYamlMessages(
+    userId: number,
+    conversationId: number,
+    userMessage: string,
+    includeHistory: boolean,
+    customHistory: Array<{ role: string; content: string }> | undefined,
+    batch: TurnBatchInfo
+  ): Promise<{ messages: ChatMessage[]; systemHash: string }> {
+    const cfg = loadAgenteYaml();
+    const [painel, topicos, midias] = await Promise.all([
+      this.agentConfigModel.findByUserId(userId),
+      this.topicModel.findByUserId(userId),
+      this.mediaModel.findByUserId(userId),
+    ]);
+    const incluirReservados = batch.contatoiaAutorizado !== undefined
+      ? batch.contatoiaAutorizado === true
+      : /#contatoia/i.test(userMessage);
+    const sys = buildSystemFixo(cfg, painel as any, topicos as any, midias as any, { incluirReservados });
+
+    let nome: string | null = null;
+    let telefone: string | null = null;
+    let extras = '';
+    if (conversationId > 0) {
+      try {
+        const conversation = await this.conversationModel.findById(conversationId);
+        if (conversation) {
+          nome = conversation.contact_name || null;
+          telefone = conversation.contact_number || null;
+          extras = await this.buildClienteExtras(userId, conversation.contact_number || '');
+        }
+      } catch (error) {
+        logger.error(`Erro ao buscar dados do cliente para o contexto do turno: ${error}`);
+      }
+    }
+    const contexto = buildContextoTurno({ agora: dataHoraMinuto(), nome, telefone, extras });
+    const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory) : [];
+    const messages = buildChatMessages(sys.text, history, userMessage);
+    const last = messages[messages.length - 1];
+    last.content = mensagemFinal(contexto, last.content);
+
+    const ctx = currentTurn();
+    if (ctx) {
+      ctx.meta.prompt = 'yaml';
+      ctx.meta.yaml_versao = cfg.versao;
+      ctx.meta.system_hash = sys.hash;
+      ctx.meta.system_chars = sys.text.length;
+      ctx.meta.historico_msgs = history.length;
+    }
+    logger.info(`[agente.yaml] conversa ${conversationId}: system ${sys.hash} (${sys.text.length} chars, ${sys.topicos.length} tópicos, ${sys.midias.length} mídias${sys.reservadosIncluidos.length ? `, reservados ${sys.reservadosIncluidos.join(',')}` : ''}), histórico ${history.length}`);
+    return { messages, systemHash: sys.hash };
+  }
+
+  /**
    * Item 3: histórico como mensagens user/assistant. Últimas HISTORY_MAX_MESSAGES (30) mensagens
    * das últimas HISTORY_MAX_AGE_HOURS (72 h), sem o lote atual.
    */
@@ -668,6 +745,71 @@ export class RAGService {
   }
 
   /**
+   * Fidelidade (barras ✅/⬜) e vouchers do cliente, mesmas linhas do prompt antigo. Usado no prompt
+   * antigo (dentro de "Outras instruções") e no [contexto do turno] do agente.yaml (item 4).
+   */
+  private async buildClienteExtras(userId: number, contactNumber: string): Promise<string> {
+    let extras = '';
+    // Progresso do cliente no programa de fidelidade (para a IA informar "faltam X" + barra ✅/⬜)
+    try {
+      const clienteModel = new VmLavClienteModel();
+      const fidelizacaoService = new FidelizacaoService();
+      const cliente = await clienteModel.findByTelefoneNormalized(userId, contactNumber);
+      if (cliente?.cpf) {
+        const progresso = await fidelizacaoService.getProgressoParaPrompt(userId, cliente.cpf);
+        if (progresso) {
+          const objLav = progresso.proximoObjetivoLavagens ?? 0;
+          const objSec = progresso.proximoObjetivoSecagens ?? 0;
+          const preenchidosLav = Math.max(0, objLav - progresso.lavagensFaltam);
+          const preenchidosSec = Math.max(0, objSec - progresso.secagensFaltam);
+          const barraLav = objLav > 0 ? '✅'.repeat(preenchidosLav) + '⬜'.repeat(progresso.lavagensFaltam) : '';
+          const barraSec = objSec > 0 ? '✅'.repeat(preenchidosSec) + '⬜'.repeat(progresso.secagensFaltam) : '';
+          const lav = `Lavagens: Faltam ${progresso.lavagensFaltam}${progresso.proximoPremioLavagens ? ` (Prêmio: ${progresso.proximoPremioLavagens})` : ''}`;
+          const sec = `Secagens: Faltam ${progresso.secagensFaltam}${progresso.proximoPremioSecagens ? ` (Prêmio: ${progresso.proximoPremioSecagens})` : ''}`;
+          extras += `\nPROXIMO PREMIO PROGRAMA FIDELIDADE :\n${lav}`;
+          if (barraLav) extras += `\n${barraLav}`;
+          extras += `\n${sec}`;
+          if (barraSec) extras += `\n${barraSec}`;
+        }
+        // SALDO VOUCHERS: todos os vouchers do cliente (incluindo saldo zerado)
+        try {
+          const voucherModel = new VmLavVoucherModel();
+          const vouchers = await voucherModel.findByUserIdAndClienteCpf(userId, cliente.cpf);
+          extras += '\nLISTA DE VOUCHERS DESTE CLIENTE: (Informe os codigos abaixo ao cliente quando for solicitado por ele)';
+          if (vouchers.length === 0) {
+            extras += '\nNenhum voucher encontrado no CPF deste cliente.';
+          } else {
+            const fmtData = (d: Date | null | undefined): string => {
+              if (!d) return '-';
+              const x = new Date(d);
+              const day = String(x.getDate()).padStart(2, '0');
+              const month = String(x.getMonth() + 1).padStart(2, '0');
+              return `${day}/${month}/${x.getFullYear()}`;
+            };
+            const fmtSaldo = (n: number): string => {
+              const v = Number(n);
+              const s = (isNaN(v) ? 0 : v).toFixed(2).replace('.', ',');
+              return `R$ ${s}`;
+            };
+            for (const v of vouchers) {
+              const cat = v.categoria_nome ? ` (${v.categoria_nome})` : '';
+              const gerado = fmtData(v.data_gerado);
+              const validade = fmtData(v.validade_fim);
+              const status = v.ativo ? 'Ativo' : 'Inativo';
+              extras += `\nVoucher: ${v.codigo} Saldo: ${fmtSaldo(v.saldo)}${cat} (gerado: ${gerado} - validade ${validade}) ${status}`;
+            }
+          }
+        } catch (errVou: any) {
+          logger.debug(`Erro ao buscar vouchers para prompt: ${errVou?.message || errVou}`);
+        }
+      }
+    } catch (errFid: any) {
+      logger.debug(`Erro ao buscar progresso fidelidade para prompt: ${errFid?.message || errFid}`);
+    }
+    return extras;
+  }
+
+  /**
    * Gerar prompt completo com contexto
    */
   private async buildPrompt(
@@ -702,62 +844,7 @@ export class RAGService {
 
             clienteInfo = `👤 USUÁRIO ID: ${userId}\n💬 CONVERSA ID: ${conversationId}\n📱 CONTATO CLIENTE: ${contatoCliente}`;
 
-            // Progresso do cliente no programa de fidelidade (para a IA informar "faltam X" + barra ✅/⬜)
-            try {
-              const clienteModel = new VmLavClienteModel();
-              const fidelizacaoService = new FidelizacaoService();
-              const cliente = await clienteModel.findByTelefoneNormalized(userId, conversation.contact_number || '');
-              if (cliente?.cpf) {
-                const progresso = await fidelizacaoService.getProgressoParaPrompt(userId, cliente.cpf);
-                if (progresso) {
-                  const objLav = progresso.proximoObjetivoLavagens ?? 0;
-                  const objSec = progresso.proximoObjetivoSecagens ?? 0;
-                  const preenchidosLav = Math.max(0, objLav - progresso.lavagensFaltam);
-                  const preenchidosSec = Math.max(0, objSec - progresso.secagensFaltam);
-                  const barraLav = objLav > 0 ? '✅'.repeat(preenchidosLav) + '⬜'.repeat(progresso.lavagensFaltam) : '';
-                  const barraSec = objSec > 0 ? '✅'.repeat(preenchidosSec) + '⬜'.repeat(progresso.secagensFaltam) : '';
-                  const lav = `Lavagens: Faltam ${progresso.lavagensFaltam}${progresso.proximoPremioLavagens ? ` (Prêmio: ${progresso.proximoPremioLavagens})` : ''}`;
-                  const sec = `Secagens: Faltam ${progresso.secagensFaltam}${progresso.proximoPremioSecagens ? ` (Prêmio: ${progresso.proximoPremioSecagens})` : ''}`;
-                  clienteInfo += `\nPROXIMO PREMIO PROGRAMA FIDELIDADE :\n${lav}`;
-                  if (barraLav) clienteInfo += `\n${barraLav}`;
-                  clienteInfo += `\n${sec}`;
-                  if (barraSec) clienteInfo += `\n${barraSec}`;
-                }
-                // SALDO VOUCHERS: todos os vouchers do cliente (incluindo saldo zerado)
-                try {
-                  const voucherModel = new VmLavVoucherModel();
-                  const vouchers = await voucherModel.findByUserIdAndClienteCpf(userId, cliente.cpf);
-                  clienteInfo += '\nLISTA DE VOUCHERS DESTE CLIENTE: (Informe os codigos abaixo ao cliente quando for solicitado por ele)';
-                  if (vouchers.length === 0) {
-                    clienteInfo += '\nNenhum voucher encontrado no CPF deste cliente.';
-                  } else {
-                    const fmtData = (d: Date | null | undefined): string => {
-                      if (!d) return '-';
-                      const x = new Date(d);
-                      const day = String(x.getDate()).padStart(2, '0');
-                      const month = String(x.getMonth() + 1).padStart(2, '0');
-                      return `${day}/${month}/${x.getFullYear()}`;
-                    };
-                    const fmtSaldo = (n: number): string => {
-                      const v = Number(n);
-                      const s = (isNaN(v) ? 0 : v).toFixed(2).replace('.', ',');
-                      return `R$ ${s}`;
-                    };
-                    for (const v of vouchers) {
-                      const cat = v.categoria_nome ? ` (${v.categoria_nome})` : '';
-                      const gerado = fmtData(v.data_gerado);
-                      const validade = fmtData(v.validade_fim);
-                      const status = v.ativo ? 'Ativo' : 'Inativo';
-                      clienteInfo += `\nVoucher: ${v.codigo} Saldo: ${fmtSaldo(v.saldo)}${cat} (gerado: ${gerado} - validade ${validade}) ${status}`;
-                    }
-                  }
-                } catch (errVou: any) {
-                  logger.debug(`Erro ao buscar vouchers para prompt: ${errVou?.message || errVou}`);
-                }
-              }
-            } catch (errFid: any) {
-              logger.debug(`Erro ao buscar progresso fidelidade para prompt: ${errFid?.message || errFid}`);
-            }
+            clienteInfo += await this.buildClienteExtras(userId, conversation.contact_number || '');
           }
         } catch (error) {
           logger.error(`Erro ao buscar dados do cliente para prompt: ${error}`);
@@ -912,6 +999,11 @@ export class RAGService {
     }
   }
 
+  /** Item 4: session_id por conversa (só vai no payload com OPENROUTER_PAYLOAD=v2). */
+  private llmExtra(conversationId: number): { sessionId?: string } {
+    return conversationId > 0 ? { sessionId: `conv-${conversationId}` } : {};
+  }
+
   /**
    * Gerar resposta usando RAG
    */
@@ -951,7 +1043,20 @@ export class RAGService {
       // Construir prompt com contexto
       let prompt: string;
       let llmInput: string | ChatMessage[];
-      if (await this.useMessagesHistory(conversationId)) {
+      let yaml: { messages: ChatMessage[] } | null = null;
+      if (await this.useAgenteYaml(conversationId)) {
+        try {
+          yaml = await this.buildAgenteYamlMessages(userId, conversationId, userMessage, includeHistory, customHistory, batch);
+        } catch (error: any) {
+          if (isTurnAbort(error)) throw error;
+          // agente.yaml quebrado/ausente: segue no prompt antigo (com RAG) em vez de não responder.
+          logger.error(`[agente.yaml] falhou, usando o prompt antigo: ${error.message}`);
+        }
+      }
+      if (yaml) {
+        llmInput = yaml.messages;
+        prompt = renderForLog(yaml.messages);
+      } else if (await this.useMessagesHistory(conversationId)) {
         // Item 3: [system: instruções + contexto] + histórico user/assistant + [user: lote atual]
         const system = await this.buildPrompt(userId, conversationId, userMessage, includeHistory, customHistory, { messagesMode: true });
         const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory) : [];
@@ -964,7 +1069,11 @@ export class RAGService {
       }
 
       // Gerar resposta usando OpenRouterService (usando modelo e parâmetros do AgentConfig)
-      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions);
+      if (!yaml) {
+        const ctx = currentTurn();
+        if (ctx) ctx.meta.prompt = 'rag';
+      }
+      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions, this.llmExtra(conversationId));
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
       if (conversationId === 0) {
@@ -1051,7 +1160,7 @@ export class RAGService {
         system += `Outras instruções:\n${currentDateTime}\n\n${CONTINUIDADE_MENSAGENS}`;
         const history = await this.getHistoryAsChat(conversationId, userMessage, batch);
         const messages = buildChatMessages(system, history, userMessage);
-        const text = await this.ollamaService.generateResponse(messages, undefined, generationModel, generationOptions);
+        const text = await this.ollamaService.generateResponse(messages, undefined, generationModel, generationOptions, this.llmExtra(conversationId));
         if (conversationId !== 0) {
           try {
             const conversation = await this.conversationModel.findById(conversationId);
@@ -1102,7 +1211,7 @@ export class RAGService {
       prompt += `Última pergunta do cliente: ${lastClientMessage}`;
 
       // Gerar resposta usando OpenRouterService (usando modelo e parâmetros do AgentConfig)
-      const responseText = await this.ollamaService.generateResponse(prompt, undefined, generationModel, generationOptions);
+      const responseText = await this.ollamaService.generateResponse(prompt, undefined, generationModel, generationOptions, this.llmExtra(conversationId));
 
       // Se for conversa real (conversationId !== 0), logar prompt e resposta para curadoria
       if (conversationId !== 0) {

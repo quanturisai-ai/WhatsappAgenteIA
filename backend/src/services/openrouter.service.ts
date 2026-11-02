@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { recordLlmCall, usageFields } from '../utils/turnMetrics';
-import { turnMetricsEnabled } from '../utils/agentFlags';
+import { envInt, openrouterPayloadV2, openrouterProviderConfig, openrouterProviderMode, turnMetricsEnabled } from '../utils/agentFlags';
+import { currentTurn } from '../utils/turnMetrics';
 import logger from '../utils/logger';
 import { currentTurnControl, isTurnAbort } from '../utils/turnControl';
 
@@ -194,6 +195,7 @@ export class OpenRouterService {
       top_k?: number;
       repeat_penalty?: number;
     },
+    extra?: { sessionId?: string },
   ): Promise<string> {
     const generationModel = model || this.defaultGenerationModel;
     try {
@@ -202,48 +204,14 @@ export class OpenRouterService {
         ? prompt.map((m) => ({ role: m.role, content: m.content }))
         : [{ role: 'user', content: context ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:` : prompt }];
 
-      const body: any = {
-        model: generationModel,
-        messages,
-        // Desativa o thinking do DeepSeek e exclui os tokens de raciocínio da resposta.
-        // "exclude: true" é essencial — sem ele o modelo ainda processa o thinking
-        // antes de responder, mesmo com effort: none.
-        reasoning: { effort: 'none', exclude: true },
-        // Limitar tokens de saída para respostas rápidas no WhatsApp
-        max_tokens: 1024,
-        // Fornecedor mais rápido do modelo: no teste de 27/10 (n=5) o padrão caía num fornecedor
-        // lento (2-18 s) e com 3/10 respostas vazias; o mais rápido respondeu em <1,5 s, 5/5 e mais barato.
-        provider: { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' },
-      };
-      // Item 1 (TURN_METRICS): pede o usage completo (custo/cache). O OpenRouter já o devolve
-      // por padrão; o campo é aceito e só deixa explícito.
-      if (turnMetricsEnabled()) {
-        body.usage = { include: true };
-      }
-
-      if (options?.temperature !== undefined) {
-        body.temperature = typeof options.temperature === 'string'
-          ? parseFloat(options.temperature)
-          : Number(options.temperature);
-      }
-      if (options?.top_p !== undefined) {
-        body.top_p = typeof options.top_p === 'string'
-          ? parseFloat(options.top_p)
-          : Number(options.top_p);
-      }
-      // top_k: documentado pelo OpenRouter (integer >= 0)
-      if (options?.top_k !== undefined) {
-        body.top_k = typeof options.top_k === 'string'
-          ? parseInt(options.top_k, 10)
-          : Number(options.top_k);
-      }
-      // repetition_penalty: range 0.0–2.0 no OpenRouter (>1.0 penaliza repetição)
-      // Valores < 1.0 encorajam repetição — garantir que seja pelo menos 1.0
-      if (options?.repeat_penalty !== undefined) {
-        const rawPenalty = typeof options.repeat_penalty === 'string'
-          ? parseFloat(options.repeat_penalty)
-          : Number(options.repeat_penalty);
-        body.repetition_penalty = rawPenalty < 1.0 ? 1.0 : rawPenalty;
+      const v2 = openrouterPayloadV2();
+      const body: any = v2
+        ? buildPayloadV2(generationModel, messages, options, extra)
+        : buildPayloadV1(generationModel, messages, options);
+      const ctxTurn = currentTurn();
+      if (ctxTurn) {
+        ctxTurn.meta.payload = v2 ? 'v2' : 'v1';
+        ctxTurn.meta.provider_mode = v2 ? openrouterProviderMode() : 'sort';
       }
 
       logger.debug(
@@ -312,4 +280,65 @@ export class OpenRouterService {
       throw error;
     }
   }
+}
+
+type ChatMsg = { role: string; content: string };
+type GenOptions = { temperature?: number; top_p?: number; top_k?: number; repeat_penalty?: number } | undefined;
+
+const num = (v: any): number => (typeof v === 'string' ? parseFloat(v) : Number(v));
+
+/** Payload antigo (OPENROUTER_PAYLOAD=v1), sem mudança de comportamento. */
+export function buildPayloadV1(model: string, messages: ChatMsg[], options: GenOptions): any {
+  const body: any = {
+    model,
+    messages,
+    // Desativa o thinking do DeepSeek e exclui os tokens de raciocínio da resposta.
+    // "exclude: true" é essencial — sem ele o modelo ainda processa o thinking
+    // antes de responder, mesmo com effort: none.
+    reasoning: { effort: 'none', exclude: true },
+    // Limitar tokens de saída para respostas rápidas no WhatsApp
+    max_tokens: 1024,
+    // Fornecedor mais rápido do modelo: no teste de 27/10 (n=5) o padrão caía num fornecedor
+    // lento (2-18 s) e com 3/10 respostas vazias; o mais rápido respondeu em <1,5 s, 5/5 e mais barato.
+    provider: { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' },
+  };
+  // Item 1 (TURN_METRICS): pede o usage completo (custo/cache). O OpenRouter já o devolve
+  // por padrão; o campo é aceito e só deixa explícito.
+  if (turnMetricsEnabled()) body.usage = { include: true };
+  if (options?.temperature !== undefined) body.temperature = num(options.temperature);
+  if (options?.top_p !== undefined) body.top_p = num(options.top_p);
+  // top_k: documentado pelo OpenRouter (integer >= 0)
+  if (options?.top_k !== undefined) {
+    body.top_k = typeof options.top_k === 'string' ? parseInt(options.top_k, 10) : Number(options.top_k);
+  }
+  // repetition_penalty: range 0.0–2.0 no OpenRouter (>1.0 penaliza repetição)
+  // Valores < 1.0 encorajam repetição — garantir que seja pelo menos 1.0
+  if (options?.repeat_penalty !== undefined) {
+    const raw = num(options.repeat_penalty);
+    body.repetition_penalty = raw < 1.0 ? 1.0 : raw;
+  }
+  return body;
+}
+
+/**
+ * Item 4 (OPENROUTER_PAYLOAD=v2): cada coisa no seu lugar.
+ * - messages: system fixo + histórico user/assistant + user final (montados por quem chama);
+ * - session_id por conversa (mesmo fornecedor por ~10 min e melhor cache);
+ * - sem usage.include (obsoleto: o usage sempre volta);
+ * - sem top_k/repetition_penalty (o painel tinha 100/0,5→1,0, praticamente neutros, e eles podem
+ *   tirar fornecedores); temperature/top_p continuam vindo do painel;
+ * - max_tokens por OPENROUTER_MAX_TOKENS (padrão 1024, igual ao antigo);
+ * - provider por OPENROUTER_PROVIDER_MODE (sort antigo | default | price).
+ */
+export function buildPayloadV2(model: string, messages: ChatMsg[], options: GenOptions, extra?: { sessionId?: string }): any {
+  const body: any = { model };
+  if (extra?.sessionId) body.session_id = String(extra.sessionId).slice(0, 256);
+  body.messages = messages;
+  if (options?.temperature !== undefined && Number.isFinite(num(options.temperature))) body.temperature = num(options.temperature);
+  if (options?.top_p !== undefined && Number.isFinite(num(options.top_p))) body.top_p = num(options.top_p);
+  body.max_tokens = envInt('OPENROUTER_MAX_TOKENS', 1024, 1);
+  body.reasoning = { effort: 'none', exclude: true };
+  const provider = openrouterProviderConfig();
+  if (provider) body.provider = provider;
+  return body;
 }

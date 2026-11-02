@@ -8,7 +8,7 @@ import { MediaModel } from '../models/media.model';
 import { MediaSentTrackingModel } from '../models/mediaSentTracking.model';
 import { HumanAttendantService } from './humanAttendant.service';
 import { normalizePhoneNumber } from '../utils/phoneUtils';
-import { contatoiaRestricted, isOwnerNumber, phonesMatch } from '../utils/agentFlags';
+import { contatoiaRestricted, isOwnerNumber, phonesMatch, ragEnabledMode } from '../utils/agentFlags';
 import { currentTurn, runMeasuredTurn, timeStage } from '../utils/turnMetrics';
 import { TurnControl, isTurnAbort, runWithTurnControl } from '../utils/turnControl';
 import logger from '../utils/logger';
@@ -229,9 +229,11 @@ export class ConversationService {
 
       // CONTATOIA_RESTRICT=on: #contatoia e CONTATO_PROATIVO só para o dono ou atendente ativo.
       // Para os demais, o comando é retirado da mensagem (turno normal, com histórico).
-      const proactiveAllowed = contatoiaRestricted()
+      const restricted = contatoiaRestricted();
+      const senderAuthorized = restricted || ragEnabledMode() !== 'true'
         ? await this.isContatoiaAuthorized(userId, conversation.contact_number)
-        : true;
+        : false;
+      const proactiveAllowed = restricted ? senderAuthorized : true;
       if (hasContatoIA && !proactiveAllowed) {
         logger.warn(`#contatoia recusado na conversa ${conversationId}: remetente não é dono nem atendente`);
         messageContent = messageContent.replace(/#contatoia/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -260,7 +262,13 @@ export class ConversationService {
             messageContent, // Usar mensagem ORIGINAL (com #contatoia)
             true, // usar RAG
             includeHistory, // Passar flag para incluir ou não histórico
-            { batchDbIds: turnMeta.batchDbIds, batchMessageIds: turnMeta.batchMessageIds }
+            {
+              batchDbIds: turnMeta.batchDbIds,
+              batchMessageIds: turnMeta.batchMessageIds,
+              // Item 4: instruções do #contatoia no system só para dono/atendente (ou, com
+              // CONTATOIA_RESTRICT=off, quando a mensagem traz o comando, como antes).
+              contatoiaAutorizado: senderAuthorized || (!restricted && hasContatoIA),
+            }
           ),
           new Promise<string>((_, reject) =>
             setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
