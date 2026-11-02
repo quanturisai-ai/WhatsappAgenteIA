@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { modeloPainelAppliesTo, multimodalDataCollection } from '../utils/agentFlags';
-import { aceita, capacidades, ehTranscricao } from './modelosOpenRouter';
+import { aceita, capacidades, ehTranscricao, reasoningObrigatorio } from './modelosOpenRouter';
 import { modelosDoUsuario } from './modelosPainel';
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -89,6 +89,8 @@ export class AudioTranscriptionService {
       return null;
     }
     const provider = painel ? { provider: { data_collection: multimodalDataCollection() } } : {};
+    // Modelo de chat com raciocínio obrigatório (catálogo) recusa o payload sem reasoning: menor esforço aceito.
+    const rzAudio = painel ? reasoningObrigatorio(modelo) : undefined;
 
     const format = mimetypeToFormat(mimetype);
     const base64Audio = buffer.toString('base64');
@@ -113,8 +115,9 @@ export class AudioTranscriptionService {
             ? {
                 model: modelo,
                 ...provider,
+                ...(rzAudio ? { reasoning: rzAudio } : {}),
                 temperature: 0,
-                max_tokens: 2000,
+                max_tokens: rzAudio ? 4000 : 2000,
                 messages: [{
                   role: 'user',
                   content: [

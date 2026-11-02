@@ -176,7 +176,8 @@ export function alertaVideoGrande(plano: PlanoMidias): string | null {
   if (plano.videosNaoVistos.length) motivos.push(`${plano.videosNaoVistos.length} vídeo(s) que a IA não conseguiu abrir`);
   if (plano.semModelo?.length) motivos.push(`${plano.semModelo.length} foto(s)/vídeo(s) que nenhum modelo configurado no painel consegue ver`);
   if (motivos.length === 0) return null;
-  return `[ALERTAR_ATENDENTE: Cliente enviou ${motivos.join(' e ')}. Resumo: veja o vídeo na conversa.]`;
+  const soFoto = !plano.videosGrandes.length && !plano.videosNaoVistos.length && (plano.semModelo || []).every((m) => m.tipo === 'foto');
+  return `[ALERTAR_ATENDENTE: Cliente enviou ${motivos.join(' e ')}. Resumo: veja ${soFoto ? 'a foto' : 'o vídeo'} na conversa.]`;
 }
 
 /**
@@ -596,15 +597,22 @@ function comPrazo<T>(p: Promise<T>, ms: number, valor: T): Promise<T> {
  */
 export async function descricaoParaTurno(arq: MidiaArquivo, modelo: string): Promise<DescricaoMidia | null> {
   const prazo = envInt('AGENTE_VISAO_TIMEOUT_MS', 25000, 1000);
+  const t0 = Date.now();
+  const resta = () => prazo - (Date.now() - t0);
+  const ESTOUROU = Symbol('prazo');
   try {
+    // Um prazo só para o turno: estourou esperando a da chegada -> "não vista" na hora (a chamada da
+    // chegada segue sozinha e grava para o histórico; não se paga outra nem se espera de novo).
     const andamento = descricaoEmAndamento(arq.messageDbId);
     if (andamento) {
-      const d = await comPrazo(andamento, prazo, null);
+      const d = await comPrazo<DescricaoMidia | null | typeof ESTOUROU>(andamento, prazo, ESTOUROU);
+      if (d === ESTOUROU) return null;
       if (d) return d;
     }
     const gravada = (await infoMidiasHistorico([arq.messageDbId])).get(arq.messageDbId)?.descricao;
     if (gravada && gravada.descricao) return gravada;
-    return await comPrazo(descreverMidiaRecebida(arq.messageDbId, arq.mediaId, { modelo }), prazo, null);
+    if (resta() < 1000) return null;
+    return await comPrazo(descreverMidiaRecebida(arq.messageDbId, arq.mediaId, { modelo }), resta(), null);
   } catch (err: any) {
     logger.warn(`[midia] descrição para o turno falhou (mensagem ${arq.messageDbId}): ${err?.message || err}`);
     return null;

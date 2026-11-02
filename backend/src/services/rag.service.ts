@@ -631,6 +631,8 @@ export class RAGService {
               const p = pm;
               const midiasM = { geracao: p.modelos.geracao, visao: p.modelos.visao };
               await Promise.all([capacidades(p.modelos.visao), garantirCatalogo({ esperaMs: 5000 })]);
+              // Catálogo pode ter chegado só agora: inline decidido com a capacidade atual (não a lida antes).
+              if (!p.cap.conhecido) p.cap = capacidadesDe(p.modelos.geracao);
               plano = await planejarTurnoPainel(
                 arquivos, limitesDoEnv(bytesTexto), (f) => fs.readFileSync(f),
                 (tipo) => aceita(p.cap, tipo) === true,

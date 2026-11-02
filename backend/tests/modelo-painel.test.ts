@@ -54,6 +54,8 @@ const CATALOGO = [
     reasoning: { mandatory: false }, supported_parameters: ['tools', 'response_format', 'reasoning'], pricing: { prompt: '0.0000001', completion: '0.0000004' } },
   { id: WHISPER, architecture: { input_modalities: ['audio'], output_modalities: ['transcription'] }, supported_parameters: [], pricing: { prompt: '0.00000333' } },
   { id: 'vendor/so-texto', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: ['temperature'] },
+  { id: 'vendor/audio-pensa', architecture: { input_modalities: ['text', 'audio'], output_modalities: ['text'] },
+    reasoning: { mandatory: true, supported_efforts: ['high', 'low'] }, supported_parameters: ['reasoning'] },
   { id: 'vendor/recusa-tools', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: ['tools'] },
 ];
 
@@ -279,6 +281,7 @@ test('GLM no painel: reasoning pelo catálogo (low, sem "none"), foto e vídeo i
   const c = w.corpos[0];
   assert.equal(c.model, GLM);
   assert.deepEqual(c.reasoning, { effort: 'low', exclude: true });
+  assert.equal(c.max_tokens, 4096, 'raciocínio obrigatório: folga no teto para a resposta não vir vazia');
   assert.equal(ultimaUser(c)[1].type, 'video_url');
   assert.deepEqual(c.provider, { data_collection: 'deny' });
   assert.equal(post.length, 0);
@@ -494,6 +497,64 @@ test('transcrição: modelo do painel, rota pelo catálogo e deny; .env é padr�
 });
 
 // ================================================================ regra do dono: nenhum modelo fixo
+
+// ================================================================ correções do juiz (02/11)
+
+test('modo test: raciocínio do catálogo só no número de teste; cliente comum com o payload de antes', async () => {
+  flags({ AGENTE_MODELO_PAINEL: 'test', AGENTE_MULTIMODAL: 'off', OPENROUTER_GENERATION_MODEL: GLM });
+  bancoFalso();
+  const a = criar(GLM, FONE_TESTE, []);
+  await a.svc.generateResponse(1, 7, 'Oi', undefined, true, {});
+  assert.deepEqual(a.corpos[0].reasoning, { effort: 'low', exclude: true });
+  assert.equal(a.corpos[0].max_tokens, 4096);
+  const b = criar(GLM, FONE_CLIENTE, []);
+  await b.svc.generateResponse(1, 8, 'Oi', undefined, true, {});
+  assert.deepEqual(b.corpos[0].reasoning, { effort: 'none', exclude: true }, 'cliente fora da lista: igual à etapa 5');
+  assert.equal(b.corpos[0].max_tokens, 1024);
+  // deepseek (raciocínio opcional) no painel: teto de sempre
+  flags({ AGENTE_MODELO_PAINEL: 'on', AGENTE_MULTIMODAL: 'off', OPENROUTER_GENERATION_MODEL: GEMINI });
+  const d = criar(DEEPSEEK, FONE_CLIENTE, []);
+  await d.svc.generateResponse(1, 8, 'Oi', undefined, true, {});
+  assert.equal(d.corpos[0].max_tokens, 1024);
+});
+
+test('prazo da descrição: estourou esperando a da chegada => "não vista" na hora, sem segunda chamada', async () => {
+  flags({ AGENTE_MODELO_PAINEL: 'on', AGENTE_MULTIMODAL: 'on', OPENROUTER_GENERATION_MODEL: GEMINI, AGENTE_VISAO_TIMEOUT_MS: '1000' });
+  bancoFalso({ painel: { vision_model: GLM } });
+  const post = postFalso({ atraso: 3000 });
+  const { descreverMidiaRecebida } = await import('../src/services/midiaTurno');
+  const { opcoesDescricaoChegada } = await import('../src/services/modelosPainel');
+  const chegada = descreverMidiaRecebida(4, 11, opcoesDescricaoChegada(1, FONE_CLIENTE));
+  const w = criar(DEEPSEEK, FONE_CLIENTE, VIDEO_LOTE);
+  const t0 = Date.now();
+  const r = await w.svc.generateResponse(1, 8, 'olha', undefined, true, LOTE_VIDEO());
+  const ms = Date.now() - t0;
+  assert.ok(ms < 1900, `uma espera só (${ms} ms)`);
+  assert.match(r, /\[ALERTAR_ATENDENTE: Cliente enviou 1 vídeo\(s\) que a IA não conseguiu abrir.*veja o vídeo/);
+  await chegada; // a da chegada termina sozinha e grava para o histórico
+  assert.equal(post.length, 1, 'nenhuma chamada além da chegada');
+});
+
+test('alerta de foto sem modelo fala da foto', async () => {
+  const { alertaVideoGrande } = await import('../src/services/midiaTurno');
+  const plano: any = { videosGrandes: [], videosNaoVistos: [], semModelo: [{ mediaId: 1, tipo: 'foto' }] };
+  assert.match(alertaVideoGrande(plano) || '', /veja a foto na conversa/);
+});
+
+test('transcrição por modelo de chat com raciocínio obrigatório: manda o menor esforço (sem 400)', async () => {
+  flags({ AGENTE_MODELO_PAINEL: 'on', OPENROUTER_TRANSCRIPTION_MODEL: GEMINI });
+  bancoFalso({ painel: { transcription_model: 'vendor/audio-pensa' } });
+  const post = postFalso({ resposta: respTranscricao });
+  const r = await new AudioTranscriptionService().transcribe(AUDIO, 'audio/ogg', { userId: 1, contato: FONE_CLIENTE });
+  assert.equal(r?.text, 'olá via chat');
+  assert.deepEqual(post[0].body.reasoning, { effort: 'low', exclude: true });
+  assert.deepEqual(post[0].body.provider, { data_collection: 'deny' });
+  // gemini (raciocínio opcional): payload sem reasoning, como antes
+  bancoFalso();
+  const p2 = postFalso({ resposta: respTranscricao });
+  await new AudioTranscriptionService().transcribe(AUDIO, 'audio/ogg', { userId: 1, contato: FONE_CLIENTE });
+  assert.equal(p2[0].body.reasoning, undefined);
+});
 
 test('nenhum id de modelo fixo no código de produção (exceto o ollama.service, código morto)', () => {
   const raiz = path.join(__dirname, '..', 'src');

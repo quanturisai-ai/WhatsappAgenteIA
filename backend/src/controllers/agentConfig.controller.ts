@@ -248,6 +248,7 @@ export const updateAgentConfig = async (
         maxAgeHours: config.max_age_hours ?? 12,
         createdAt: config.created_at,
         updatedAt: config.updated_at,
+        ...(await extrasDoPainel(userId)),
       },
     });
   } catch (error: any) {

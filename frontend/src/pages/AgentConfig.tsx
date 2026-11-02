@@ -1387,7 +1387,9 @@ export const AgentConfig = () => {
                     {config.modelosPainel?.ativo && (
                       <option value="">Padrão do .env ({config.modelosPainel.padroes.geracao || 'vazio'})</option>
                     )}
-                    {modelsLoading ? (
+                    {config.modelosPainel?.ativo && catalogo.length > 0 ? (
+                      opcoesModelo((m) => m.saida.includes('text'), config.generationModel)
+                    ) : modelsLoading ? (
                       <option>Carregando modelos...</option>
                     ) : ollamaModels.length === 0 ? (
                       <option>Nenhum modelo disponível</option>

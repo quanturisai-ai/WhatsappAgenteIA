@@ -255,8 +255,14 @@ export class OpenRouterService {
       if (extra?.dataCollection) body.provider = { ...(body.provider || {}), data_collection: extra.dataCollection };
       // Etapa 6 (AGENTE_MODELO_PAINEL): modelo com raciocínio obrigatório (catálogo do OpenRouter) recusa
       // effort "none" com 400; vai o menor esforço aceito. Flag off: payload como antes.
-      const rz = extra?.reasoning ?? (modeloPainelMode() !== 'off' ? reasoningObrigatorio(generationModel) : undefined);
+      // Modo test: só turnos que já estão no caminho do painel (meta.modelo_painel = número de teste);
+      // cliente fora da lista fica com o payload de antes.
+      const modoPainel = modeloPainelMode();
+      const noPainel = modoPainel === 'on' || (modoPainel === 'test' && !!currentTurn()?.meta?.modelo_painel);
+      const rz = extra?.reasoning ?? (noPainel ? reasoningObrigatorio(generationModel) : undefined);
       if (rz) body.reasoning = rz;
+      // Com raciocínio ligado (obrigatório no catálogo), o pensamento conta no teto: sem folga a resposta vem vazia.
+      if (rz && rz.effort && rz.effort !== 'none' && (body.max_tokens ?? 0) < 4096) body.max_tokens = 4096;
       const ctxTurn = currentTurn();
       if (ctxTurn) {
         ctxTurn.meta.payload = v2 ? 'v2' : 'v1';
