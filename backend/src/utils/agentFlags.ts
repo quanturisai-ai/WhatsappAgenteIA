@@ -233,3 +233,65 @@ export function deveDescreverMidia(contactNumber: string | null | undefined): bo
   if ((process.env.MIDIA_DESCRICAO || 'on').trim().toLowerCase() === 'off') return false;
   return multimodalAppliesTo(contactNumber) && agenteYamlAppliesTo(contactNumber) && modelAcceptsMedia(multimodalModel());
 }
+
+/**
+ * AGENTE_TOOLS (item 6): off (padrão, antigo) | test (só AGENTE_TEST_NUMBERS) | on (todos).
+ * Ligado, e só nos turnos do agente.yaml com payload v2: o modelo recebe as ferramentas nativas
+ * (`tools`: enviar_midia, chamar_atendente e, só para dono/atendente, contato_proativo), em um loop
+ * de no máximo AGENTE_TOOLS_MAX_CHAMADAS (3) chamadas ao LLM; acima disso chama um atendente.
+ * Desligado: comandos no texto ([ENVIAR_MIDIA:ID] etc.) lidos por regex, como antes.
+ */
+export function agenteToolsMode(): RolloutMode {
+  return rolloutMode('AGENTE_TOOLS');
+}
+export function agenteToolsAppliesTo(contactNumber: string | null | undefined): boolean {
+  return rolloutAppliesTo('AGENTE_TOOLS', contactNumber);
+}
+/**
+ * AGENTE_TOOLS_REGEX (item 6): com as tools nativas ligadas, os comandos escritos no texto
+ * ([ENVIAR_MIDIA:ID], [ALERTAR_ATENDENTE: ...], [CONTATO_PROATIVO: ...]) continuam sendo executados
+ * como reserva (on, padrão) ou só são retirados do texto (off). Sem tools nativas, o regex sempre vale.
+ */
+export function agenteToolsRegexReserva(): boolean {
+  return (process.env.AGENTE_TOOLS_REGEX || 'on').trim().toLowerCase() !== 'off';
+}
+
+/**
+ * CHAMAR_ATENDENTE_PAUSA (item 6): off (padrão, antigo: o alerta não pausa a IA) | test | on.
+ * Ligado, quando a IA chama o atendente (ferramenta ou comando) a IA da conversa é pausada, desde que
+ * a config permita: agente.yaml handoff.pausar_ia = true e painel pause_on_human_reply diferente de falso.
+ * Reativar: botão do painel (ou mensagem/encerramento pelo atendente, como hoje).
+ */
+export function chamarAtendentePausaAppliesTo(contactNumber: string | null | undefined): boolean {
+  return rolloutAppliesTo('CHAMAR_ATENDENTE_PAUSA', contactNumber);
+}
+
+/**
+ * AGENTE_ACOES_SIMULADAS (item 6): números de conversa (ex.: o de teste do dono) em que alerta ao
+ * atendente e contato proativo são só registrados no log, sem mandar nada a ninguém. Vazio (padrão) =
+ * comportamento antigo. Serve para testar ponta a ponta sem acordar o atendente.
+ */
+export function acoesSimuladas(contactNumber: string | null | undefined): boolean {
+  if (!contactNumber) return false;
+  return parseList(process.env.AGENTE_ACOES_SIMULADAS).some((n) => sameNumber(n, contactNumber));
+}
+
+/**
+ * ENVIAR_MIDIA_CATALOGO (item 6): on = a IA só consegue enviar mídia do catálogo (ativa, de saída,
+ * pronta, do mesmo usuário), a mesma lista que vai no prompt; off (padrão, antigo) = qualquer mídia
+ * pronta do usuário, inclusive foto/vídeo recebido de outro cliente (source=incoming).
+ */
+export function enviarMidiaSoCatalogo(): boolean {
+  const v = (process.env.ENVIAR_MIDIA_CATALOGO || 'off').trim().toLowerCase();
+  return v === 'on' || v === 'true' || v === '1';
+}
+
+/**
+ * RAG_MIDIA_ID_FIX (item 6, só com RAG_ENABLED=true): on = a busca vetorial reconhece a mídia pelo
+ * metadata `media_id` ou `id` (12 das 18 mídias indexadas só têm `id`) e ignora mídia fora do catálogo;
+ * off (padrão, antigo) = só `media_id`.
+ */
+export function ragMidiaIdFix(): boolean {
+  const v = (process.env.RAG_MIDIA_ID_FIX || 'off').trim().toLowerCase();
+  return v === 'on' || v === 'true' || v === '1';
+}
