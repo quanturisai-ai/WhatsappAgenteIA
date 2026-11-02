@@ -410,3 +410,14 @@ test('descrição: 429 passageiro é repetido com espera (3 tentativas); erro 40
   await assert.rejects(m.comRetentativa(async () => { n++; throw { response: { status: 400 } }; }, [3000, 10000], dormir));
   assert.equal(n, 1);
 });
+
+test('semBase64: base64 no meio do texto (eco do provedor no erro) também some do log', async () => {
+  const { semBase64 } = await import('../src/utils/semBase64');
+  const b64 = Buffer.alloc(3000, 7).toString('base64');
+  const r = JSON.stringify(semBase64({ error: { message: `Invalid image: data:image/jpeg;base64,${b64} rejected`, raw: `x ${b64} y` } }));
+  assert.ok(!r.includes(b64.slice(0, 100)), 'base64 vazou: ' + r.slice(0, 200));
+  assert.match(r, /base64,<\d+ bytes> rejected/);
+  assert.match(r, /x <base64 \d+ chars> y/);
+  assert.equal(semBase64({ u: 'data:image/png;base64,AAAA' }).u, 'data:image/png;base64,<3 bytes>');
+  assert.equal(semBase64({ t: 'texto normal E21 secadora 03' }).t, 'texto normal E21 secadora 03');
+});

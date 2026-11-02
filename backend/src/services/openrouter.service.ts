@@ -4,7 +4,7 @@ import { envInt, openrouterPayloadV2, openrouterProviderConfig, openrouterProvid
 import { currentTurn } from '../utils/turnMetrics';
 import logger from '../utils/logger';
 import { currentTurnControl, isTurnAbort } from '../utils/turnControl';
-import { semBase64 } from '../utils/semBase64';
+import { semBase64, semBase64NoTexto } from '../utils/semBase64';
 
 /** Item 2: chamada dentro de um turno do agendador leva o sinal de cancelamento (mensagem nova). */
 function requestOptions(): [] | [{ signal: AbortSignal }] {
@@ -265,7 +265,7 @@ export class OpenRouterService {
     } catch (error: any) {
       if (isTurnAbort(error)) throw error; // item 2: cancelado por mensagem nova, não é falha
       logger.error(
-        `Erro ao gerar resposta com modelo '${generationModel}': ${error.message}`,
+        `Erro ao gerar resposta com modelo '${generationModel}': ${extra?.temMidia ? semBase64NoTexto(String(error.message)) : error.message}`,
       );
       if (error.response) {
         // Item 5: com mídia, o erro do provedor pode ecoar parte do corpo: sem base64 e curto.
