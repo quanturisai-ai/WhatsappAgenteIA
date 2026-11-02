@@ -8,6 +8,9 @@ import path from 'path';
 
 const ARQ = path.join(os.tmpdir(), `turnos-teste-${process.pid}.jsonl`);
 process.env.TURN_METRICS_FILE = ARQ;
+// Etapa 6: sem modelo fixo no código; o teste declara o .env como a produção (antes eram padrões do código).
+process.env.OPENROUTER_GENERATION_MODEL = process.env.OPENROUTER_GENERATION_MODEL || 'deepseek/deepseek-v4-flash';
+process.env.OPENROUTER_EMBEDDING_MODEL = process.env.OPENROUTER_EMBEDDING_MODEL || 'emb-x';
 
 import { ConversationService } from '../src/services/conversation.service';
 import { OpenRouterService } from '../src/services/openrouter.service';

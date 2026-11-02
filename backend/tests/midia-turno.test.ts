@@ -10,6 +10,8 @@ process.env.HISTORY_MESSAGES = 'on';
 process.env.RAG_ENABLED = 'false';
 process.env.OPENROUTER_PAYLOAD = 'v2';
 process.env.OPENROUTER_PROVIDER_MODE = 'default';
+// Etapa 6: sem modelo fixo no código; o teste declara o .env como a produção (antes eram padrões do código).
+process.env.AGENTE_MULTIMODAL_MODELOS = 'google/gemini-';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

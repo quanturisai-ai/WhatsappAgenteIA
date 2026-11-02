@@ -7,6 +7,8 @@ process.env.SYNCZ_BASE_URL = 'http://synczap.invalid';
 process.env.SYNCZ_API_KEY = 'chave-de-teste';
 process.env.SYNCZ_INSTANCE_ID = 'instancia-teste';
 process.env.AGENTE_TEST_NUMBERS = '5561900000001';
+// Etapa 6: sem modelo fixo no código; o teste declara o .env como a produção (antes eram padrões do código).
+process.env.OPENROUTER_GENERATION_MODEL = process.env.OPENROUTER_GENERATION_MODEL || 'deepseek/deepseek-v4-flash';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
