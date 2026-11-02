@@ -66,11 +66,14 @@ export function parseAgenteYaml(text: string): AgenteYaml {
   const erro = (m: string) => { throw new Error(`agente.yaml inválido: ${m}`); };
   if (!doc || typeof doc !== 'object') erro('vazio');
   if (typeof doc.versao !== 'number') erro('falta versao');
-  if (!doc.persona || typeof doc.persona.papel !== 'string') erro('falta persona.papel');
-  if (!Array.isArray(doc.regras) || doc.regras.some((r: any) => !r || typeof r.id !== 'string' || typeof r.texto !== 'string')) erro('regras');
+  const str = (v: any) => typeof v === 'string' && v.trim() !== '';
+  const boolOpc = (v: any) => v === undefined || typeof v === 'boolean';
+  if (!doc.persona || !str(doc.persona.papel)) erro('falta persona.papel');
+  if (!boolOpc(doc.persona.empresa_do_painel)) erro('persona.empresa_do_painel');
+  if (doc.persona.empresa !== undefined && typeof doc.persona.empresa !== 'string') erro('persona.empresa');
+  if (!Array.isArray(doc.regras) || doc.regras.some((r: any) => !r || !str(r.id) || !str(r.texto))) erro('regras');
   const ids = doc.regras.map((r: any) => r.id);
   if (new Set(ids).size !== ids.length) erro('ids de regra repetidos');
-  const str = (v: any) => typeof v === 'string' && v.trim() !== '';
   if (doc.regras.length === 0) erro('regras vazias');
   if (!Array.isArray(doc.ferramentas) || doc.ferramentas.some((f: any) => !f || !str(f.nome) || !str(f.comando) || !str(f.descricao))) erro('ferramentas');
   if (!doc.handoff || !Array.isArray(doc.handoff.quando) || doc.handoff.quando.length === 0 || doc.handoff.quando.some((q: any) => !str(q))) erro('handoff');
@@ -79,6 +82,8 @@ export function parseAgenteYaml(text: string): AgenteYaml {
   if (!c || c.fonte !== 'banco' || !Array.isArray(c.painel) || !Array.isArray(c.incluir_tipos)) erro('conhecimento');
   if (c.painel.some((p: any) => !p || !str(p.campo) || !str(p.titulo))) erro('conhecimento.painel');
   if (c.incluir_tipos.length === 0 || c.incluir_tipos.some((t: any) => t !== 'topic' && t !== 'media')) erro('conhecimento.incluir_tipos');
+  if (!boolOpc(c.pular_vazios)) erro('conhecimento.pular_vazios');
+  if (doc.contexto_do_turno !== undefined && !Array.isArray(doc.contexto_do_turno)) erro('contexto_do_turno');
   if (c.excluir_gatilhos !== undefined && (!Array.isArray(c.excluir_gatilhos) || c.excluir_gatilhos.some((g: any) => !str(g)))) erro('conhecimento.excluir_gatilhos');
   c.excluir_gatilhos = Array.isArray(c.excluir_gatilhos) ? c.excluir_gatilhos.map(String) : [];
   c.pular_vazios = c.pular_vazios !== false;

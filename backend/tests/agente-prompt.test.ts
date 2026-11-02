@@ -337,3 +337,15 @@ test('OPENROUTER_PAYLOAD=yaml: v2 só nos turnos do agente.yaml', async () => {
     assert.equal(openrouterPayloadV2(true), false, 'v1 = antigo sempre');
   } finally { delete process.env.OPENROUTER_PAYLOAD; }
 });
+
+test('agente.yaml: tipos errados (2ª passada do juiz) são recusados; o arquivo real passa', () => {
+  const { parseAgenteYaml, loadAgenteYaml } = require('../src/services/agentePrompt');
+  const base = fs.readFileSync(path.join(__dirname, '..', 'agente', 'agente.yaml'), 'utf8');
+  assert.ok(loadAgenteYaml().versao >= 1);
+  const troca = (de: string, para: string) => { assert.ok(base.includes(de), de); return base.replace(de, para); };
+  assert.throws(() => parseAgenteYaml(troca('papel: "atendente virtual de WhatsApp"', 'papel: "  "')), /persona.papel/);
+  assert.throws(() => parseAgenteYaml(troca('empresa_do_painel: true', 'empresa_do_painel: "sim"')), /empresa_do_painel/);
+  assert.throws(() => parseAgenteYaml(troca('pular_vazios: true', 'pular_vazios: "false"')), /pular_vazios/);
+  assert.throws(() => parseAgenteYaml(troca('  - id: R2\n    texto: "A resposta', '  - id: R2\n    texto: ""\n    x: "A resposta')), /regras/);
+  assert.throws(() => parseAgenteYaml(base.replace(/contexto_do_turno:[\s\S]*$/, 'contexto_do_turno: texto\n')), /contexto_do_turno/);
+});
