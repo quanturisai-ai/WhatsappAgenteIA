@@ -12,7 +12,9 @@ import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
-import { agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, ragEnabledMode } from '../utils/agentFlags';
+import { agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, ragEnabledMode } from '../utils/agentFlags';
+import { PlanoMidias, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
+import fs from 'fs';
 import { currentTurn } from '../utils/turnMetrics';
 import { buildContextoTurno, buildSystemFixo, dataHoraMinuto, loadAgenteYaml, mensagemFinal } from './agentePrompt';
 import {
@@ -34,6 +36,13 @@ export interface TurnBatchInfo {
   /** Item 4: remetente é dono/atendente (inclui no system os tópicos reservados, ex.: #contatoia). */
   contatoiaAutorizado?: boolean;
 }
+
+/** Item 4/5: mensagens do turno do agente.yaml (a última pode ser multimodal: [texto, foto/vídeo...]). */
+type AgenteYamlTurno = {
+  messages: Array<{ role: ChatMessage['role']; content: any }>;
+  systemHash: string;
+  multimodal?: { modelo: string; plano: PlanoMidias | null };
+};
 
 export class RAGService {
   private ollamaService: OpenRouterService;
@@ -533,7 +542,7 @@ export class RAGService {
     includeHistory: boolean,
     customHistory: Array<{ role: string; content: string }> | undefined,
     batch: TurnBatchInfo
-  ): Promise<{ messages: ChatMessage[]; systemHash: string }> {
+  ): Promise<AgenteYamlTurno> {
     const cfg = loadAgenteYaml();
     const [painel, topicos, midias] = await Promise.all([
       this.agentConfigModel.findByUserId(userId),
@@ -565,10 +574,33 @@ export class RAGService {
       }
     }
     const contexto = buildContextoTurno({ agora: dataHoraMinuto(), nome, telefone, extras });
-    const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory) : [];
-    const messages = buildChatMessages(sys.text, history, userMessage);
+    // Item 5 (AGENTE_MULTIMODAL): só em conversa real do contato liberado (test = AGENTE_TEST_NUMBERS).
+    const multimodal = conversationId > 0 && !!telefone && multimodalAppliesTo(telefone);
+    const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory, multimodal) : [];
+    const messages: Array<{ role: ChatMessage['role']; content: any }> = buildChatMessages(sys.text, history, userMessage);
     const last = messages[messages.length - 1];
     last.content = mensagemFinal(contexto, last.content);
+
+    let mm: { modelo: string; plano: PlanoMidias | null } | undefined;
+    if (multimodal) {
+      const modelo = multimodalModel();
+      let plano: PlanoMidias | null = null;
+      if (modelAcceptsMedia(modelo)) {
+        try {
+          const arquivos = await carregarMidiasDoLote(batch.batchDbIds);
+          if (arquivos.length > 0) {
+            const bytesTexto = Buffer.byteLength(JSON.stringify(messages), 'utf8');
+            plano = planejarMidias(arquivos, limitesDoEnv(bytesTexto), (p) => fs.readFileSync(p));
+            last.content = conteudoDoTurno(last.content, plano);
+          }
+        } catch (error: any) {
+          if (isTurnAbort(error)) throw error;
+          logger.error(`[midia] conversa ${conversationId}: mídias do turno indisponíveis (${error.message}); segue só com texto`);
+          plano = null;
+        }
+      }
+      mm = { modelo, plano };
+    }
 
     const ctx = currentTurn();
     if (ctx) {
@@ -577,9 +609,10 @@ export class RAGService {
       ctx.meta.system_hash = sys.hash;
       ctx.meta.system_chars = sys.text.length;
       ctx.meta.historico_msgs = history.length;
+      if (mm) ctx.meta.multimodal = mm.plano ? metaMultimodal(mm.plano, mm.modelo) : { modelo: mm.modelo };
     }
     logger.info(`[agente.yaml] conversa ${conversationId}: system ${sys.hash} (${sys.text.length} chars, ${sys.topicos.length} tópicos, ${sys.midias.length} mídias${sys.reservadosIncluidos.length ? `, reservados ${sys.reservadosIncluidos.join(',')}` : ''}), histórico ${history.length}`);
-    return { messages, systemHash: sys.hash };
+    return { messages, systemHash: sys.hash, multimodal: mm };
   }
 
   /**
@@ -590,7 +623,8 @@ export class RAGService {
     conversationId: number,
     currentText: string,
     batch: TurnBatchInfo,
-    customHistory?: Array<{ role: string; content: string }>
+    customHistory?: Array<{ role: string; content: string }>,
+    midias = false
   ): Promise<ChatMessage[]> {
     if (customHistory && customHistory.length > 0) return customHistoryToChat(customHistory, currentText);
     if (conversationId <= 0) return [];
@@ -599,7 +633,17 @@ export class RAGService {
     try {
       // Folga para o lote atual e mensagens ainda na fila, que são retiradas depois.
       const rows = await this.messageModel.findByConversationId(conversationId, maxMessages + 20, maxAgeHours);
-      return rowsToChat(historyRowsBeforeBatch(rows as any, currentText, batch, maxMessages));
+      let hist = historyRowsBeforeBatch(rows as any, currentText, batch, maxMessages);
+      if (midias) {
+        // Item 5: mídia antiga vira 1 linha (descrição gravada na chegada); erro aqui não derruba o turno.
+        try {
+          const ids = hist.filter((r: any) => r.media_id && r.id).map((r: any) => Number(r.id));
+          if (ids.length) hist = aplicarMidiasNoHistorico(hist, await infoMidiasHistorico(ids));
+        } catch (error: any) {
+          logger.warn(`[midia] histórico sem descrições na conversa ${conversationId}: ${error.message}`);
+        }
+      }
+      return rowsToChat(hist);
     } catch (error: any) {
       logger.error(`Erro ao obter histórico (mensagens) da conversa ${conversationId}: ${error.message}`);
       return [];
@@ -1048,8 +1092,8 @@ export class RAGService {
 
       // Construir prompt com contexto
       let prompt: string;
-      let llmInput: string | ChatMessage[];
-      let yaml: { messages: ChatMessage[] } | null = null;
+      let llmInput: string | Array<{ role: ChatMessage['role']; content: any }>;
+      let yaml: AgenteYamlTurno | null = null;
       if (await this.useAgenteYaml(conversationId)) {
         try {
           yaml = await this.buildAgenteYamlMessages(userId, conversationId, userMessage, includeHistory, customHistory, batch);
@@ -1079,7 +1123,15 @@ export class RAGService {
         const ctx = currentTurn();
         if (ctx) ctx.meta.prompt = 'rag';
       }
-      const responseText = await this.ollamaService.generateResponse(llmInput, undefined, generationModel, generationOptions, this.llmExtra(conversationId, !!yaml));
+      // Item 5: no caminho multimodal o modelo do .env (OPENROUTER_GENERATION_MODEL) vale sobre o do painel.
+      const mm = yaml?.multimodal;
+      const extra: any = this.llmExtra(conversationId, !!yaml);
+      if (mm && modelAcceptsMedia(mm.modelo)) {
+        extra.dataCollection = multimodalDataCollection();
+        extra.temMidia = !!mm.plano && mm.plano.partes.length > 0;
+      }
+      let responseText = await this.ollamaService.generateResponse(llmInput, undefined, mm ? mm.modelo : generationModel, generationOptions, extra);
+      if (mm?.plano) responseText = garantirAlertaVideo(responseText, mm.plano);
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
       if (conversationId === 0) {

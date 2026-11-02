@@ -184,3 +184,52 @@ export function openrouterProviderConfig(): Record<string, any> | undefined {
   }
   return p;
 }
+
+/**
+ * AGENTE_MULTIMODAL (item 5): off (padrão, antigo) | test (só AGENTE_TEST_NUMBERS) | on (todos).
+ * Ligado, e só nos turnos do agente.yaml (RAG_ENABLED=false/test):
+ * - o modelo de geração passa a ser OPENROUTER_GENERATION_MODEL (o .env manda; o do painel é ignorado);
+ * - se esse modelo for multimodal (AGENTE_MULTIMODAL_MODELOS), a foto/vídeo do lote vai junto
+ *   (image_url / video_url em base64); vídeo acima de MIDIA_VIDEO_MAX_MB vira "[vídeo recebido]" + atendente;
+ * - na chegada, cada foto/vídeo ganha uma descrição estruturada (tabela media_descricoes), usada no histórico;
+ * - com modelo multimodal, a chamada leva provider.data_collection = OPENROUTER_DATA_COLLECTION (padrão deny).
+ * Volta imediata: AGENTE_MULTIMODAL=off (ou OPENROUTER_GENERATION_MODEL=deepseek/deepseek-v4-flash, que só
+ * lê texto: aí nada de mídia vai ao modelo).
+ */
+export function multimodalMode(): RolloutMode {
+  return rolloutMode('AGENTE_MULTIMODAL');
+}
+export function multimodalAppliesTo(contactNumber: string | null | undefined): boolean {
+  return rolloutAppliesTo('AGENTE_MULTIMODAL', contactNumber);
+}
+/** Modelo de geração do caminho multimodal (só o .env). */
+export function multimodalModel(): string {
+  return (process.env.OPENROUTER_GENERATION_MODEL || '').trim() || 'deepseek/deepseek-v4-flash';
+}
+/** O modelo aceita imagem/vídeo? Prefixos em AGENTE_MULTIMODAL_MODELOS (padrão: google/gemini-). */
+export function modelAcceptsMedia(model: string): boolean {
+  const prefixes = (process.env.AGENTE_MULTIMODAL_MODELOS || 'google/gemini-')
+    .split(/[,;\s]+/).map((p) => p.trim().toLowerCase()).filter(Boolean);
+  const m = (model || '').trim().toLowerCase();
+  return prefixes.some((p) => m.startsWith(p));
+}
+/** provider.data_collection do caminho multimodal: deny (padrão) | allow. */
+export function multimodalDataCollection(): 'deny' | 'allow' {
+  return (process.env.OPENROUTER_DATA_COLLECTION || 'deny').trim().toLowerCase() === 'allow' ? 'allow' : 'deny';
+}
+/** Número decimal positivo do .env (MB etc.), com padrão. */
+export function envFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw.replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Descrever a foto/vídeo na chegada? Só quando o turno desse contato vai pelo caminho multimodal com
+ * modelo que vê mídia (AGENTE_MULTIMODAL + agente.yaml + modelo multimodal) e MIDIA_DESCRICAO != off.
+ */
+export function deveDescreverMidia(contactNumber: string | null | undefined): boolean {
+  if ((process.env.MIDIA_DESCRICAO || 'on').trim().toLowerCase() === 'off') return false;
+  return multimodalAppliesTo(contactNumber) && agenteYamlAppliesTo(contactNumber) && modelAcceptsMedia(multimodalModel());
+}

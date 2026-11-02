@@ -4,6 +4,7 @@ import { envInt, openrouterPayloadV2, openrouterProviderConfig, openrouterProvid
 import { currentTurn } from '../utils/turnMetrics';
 import logger from '../utils/logger';
 import { currentTurnControl, isTurnAbort } from '../utils/turnControl';
+import { semBase64 } from '../utils/semBase64';
 
 /** Item 2: chamada dentro de um turno do agendador leva o sinal de cancelamento (mensagem nova). */
 function requestOptions(): [] | [{ signal: AbortSignal }] {
@@ -186,7 +187,7 @@ export class OpenRouterService {
    * Para o deepseek-v4-flash, envia reasoning.effort=none para desativar o thinking.
    */
   async generateResponse(
-    prompt: string | Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    prompt: string | Array<{ role: 'system' | 'user' | 'assistant'; content: string | any[] }>,
     context?: string,
     model?: string,
     options?: {
@@ -195,7 +196,7 @@ export class OpenRouterService {
       top_k?: number;
       repeat_penalty?: number;
     },
-    extra?: { sessionId?: string; agenteYaml?: boolean },
+    extra?: { sessionId?: string; agenteYaml?: boolean; dataCollection?: 'deny' | 'allow'; temMidia?: boolean },
   ): Promise<string> {
     const generationModel = model || this.defaultGenerationModel;
     try {
@@ -208,6 +209,8 @@ export class OpenRouterService {
       const body: any = v2
         ? buildPayloadV2(generationModel, messages, options, extra)
         : buildPayloadV1(generationModel, messages, options);
+      // Item 5 (AGENTE_MULTIMODAL): política de privacidade no roteamento (só no caminho multimodal).
+      if (extra?.dataCollection) body.provider = { ...(body.provider || {}), data_collection: extra.dataCollection };
       const ctxTurn = currentTurn();
       if (ctxTurn) {
         ctxTurn.meta.payload = v2 ? 'v2' : 'v1';
@@ -217,12 +220,27 @@ export class OpenRouterService {
       logger.debug(
         `Gerando resposta com modelo: ${generationModel}, options: ${JSON.stringify(options || {})}`,
       );
-      logger.debug(`[OpenRouter] Payload: ${JSON.stringify(body)}`);
+      // Item 5: foto/vídeo do cliente nunca vai para o log (data URL vira "<N bytes>").
+      logger.debug(`[OpenRouter] Payload: ${JSON.stringify(extra?.temMidia ? semBase64(body) : body)}`);
 
       const t0 = Date.now();
       let response: any;
       try {
-        response = await this.axiosInstance.post('/chat/completions', body, ...requestOptions());
+        if (!extra?.temMidia) {
+          response = await this.axiosInstance.post('/chat/completions', body, ...requestOptions());
+        } else {
+          const opts = { maxBodyLength: Infinity, ...(requestOptions()[0] || {}) };
+          try {
+            response = await this.axiosInstance.post('/chat/completions', body, opts);
+          } catch (firstError: any) {
+            // Item 5: com mídia, o Google às vezes devolve 429 (limite do fornecedor); 1 nova tentativa.
+            if (isTurnAbort(firstError) || firstError?.response?.status !== 429) throw firstError;
+            logger.warn('[OpenRouter] 429 com mídia; nova tentativa em 1,5 s');
+            await new Promise((r) => setTimeout(r, 1500));
+            if (currentTurnControl()?.signal.aborted) throw firstError;
+            response = await this.axiosInstance.post('/chat/completions', body, opts);
+          }
+        }
       } catch (postError) {
         recordLlmCall({ kind: 'chat', model: generationModel, ms: Date.now() - t0, ok: false });
         throw postError;
@@ -282,7 +300,7 @@ export class OpenRouterService {
   }
 }
 
-type ChatMsg = { role: string; content: string };
+type ChatMsg = { role: string; content: string | any[] };
 type GenOptions = { temperature?: number; top_p?: number; top_k?: number; repeat_penalty?: number } | undefined;
 
 const num = (v: any): number => (typeof v === 'string' ? parseFloat(v) : Number(v));

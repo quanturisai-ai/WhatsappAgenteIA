@@ -19,6 +19,7 @@ export interface HistoryRow {
   message_id?: string | null;
   content?: string | null;
   message_type?: string | null;
+  media_id?: number | null;
   direction: 'incoming' | 'outgoing' | string;
 }
 
@@ -117,6 +118,14 @@ export function customHistoryToChat(custom: Array<{ role: string; content: strin
 }
 
 /** Texto legível das mensagens para o log de curadoria (whatsapp-conversations.log). */
-export function renderForLog(messages: ChatMessage[]): string {
-  return messages.map((m) => `[${m.role}]\n${m.content}`).join('\n\n');
+export function renderForLog(messages: Array<{ role: string; content: string | any[] }>): string {
+  return messages.map((m) => `[${m.role}]\n${contentForLog(m.content)}`).join('\n\n');
+}
+
+/** Item 5: conteúdo multimodal no log só com o texto e um marcador por anexo (nunca o base64). */
+function contentForLog(content: string | any[]): string {
+  if (!Array.isArray(content)) return String(content ?? '');
+  return content
+    .map((p: any) => (p?.type === 'text' ? String(p.text ?? '') : p?.type === 'video_url' ? '[vídeo anexado]' : p?.type === 'image_url' ? '[foto anexada]' : '[anexo]'))
+    .join('\n');
 }

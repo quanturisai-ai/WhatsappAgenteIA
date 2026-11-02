@@ -17,7 +17,8 @@ import { emitConversationUpdated, emitConversationNew } from '../utils/conversat
 import { ConversationService } from './conversation.service';
 import { MessageSource } from '../types';
 import { OutgoingEchoRegistry, OutgoingIntent, echoTokenStore } from './outgoingEchoRegistry';
-import { antiLoopEnabled, echoBindingAppliesTo, echoBindingMode, envInt, turnSchedulerAppliesTo } from '../utils/agentFlags';
+import { antiLoopEnabled, deveDescreverMidia, echoBindingAppliesTo, echoBindingMode, envInt, turnSchedulerAppliesTo } from '../utils/agentFlags';
+import { descreverMidiaRecebida } from './midiaTurno';
 import { PendingItem, TurnResult, TurnScheduler, schedulerConfigFromEnv } from './turnScheduler';
 import { HumanAttendantService } from './humanAttendant.service';
 
@@ -2452,6 +2453,10 @@ export class WhatsAppService extends EventEmitter {
           source: 'client',
         });
         logger.info(`Mensagem salva no banco: ID=${savedMessage.id}, conversation_id=${conversation.id}, tipo=${messageType}, media_id=${incomingMediaId}, content="${bodyPreview}"`);
+        // Item 5 (AGENTE_MULTIMODAL): descrição estruturada da foto/vídeo para o histórico, em segundo plano.
+        if (incomingMediaId && savedMessage?.id && deveDescreverMidia(contactNumber)) {
+          void descreverMidiaRecebida(Number(savedMessage.id), Number(incomingMediaId));
+        }
       } catch (error: any) {
         logger.error(`Erro ao salvar mensagem no banco: ${error.message}`);
         // Continuar mesmo se falhar ao salvar, para não perder o processamento
