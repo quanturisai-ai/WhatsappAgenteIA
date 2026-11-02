@@ -8,7 +8,7 @@ process.env.CONTATOIA_OWNER_NUMBERS = '5561900000001';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  avaliarChamada, definicoesTools, loopFerramentas, midiaNoCatalogo, TEXTO_TETO,
+  avaliarChamada, MAX_CHAMADAS_ABSOLUTO, definicoesTools, loopFerramentas, midiaNoCatalogo, TEXTO_TETO,
 } from '../src/services/agenteTools';
 import { ConversationService } from '../src/services/conversation.service';
 import { RAGService } from '../src/services/rag.service';
@@ -468,5 +468,101 @@ test('HTTP: OPENROUTER_PAYLOAD=yaml manda v2 só no turno do yaml; tools vão no
   const e = orComPost({ choices: [{ message: { content: '', tool_calls: [call('enviar_midia', { id: 2 })] } }] });
   await assert.rejects(e.svc.generateResponse(msgs, undefined, 'm', opts, { agenteYaml: true }), /não contém texto/,
     'sem tools pedidas, tool_calls na resposta não contam (antigo)');
+  limparFlags();
+});
+
+// ---------------------------------------------------------------- correções do juiz da etapa 5
+
+test('juiz B2: no teto estourado só sai o alerta automático (mídia válida e contato aceitos são descartados)', async () => {
+  const r = await loopFerramentas(
+    async () => ({ content: null, toolCalls: [call('enviar_midia', { id: 2 }), call('contato_proativo', { numero: '62955550000', mensagem: 'x' }, 'c2')] }),
+    [{ role: 'user', content: 'oi' }], { midiasCatalogo: new Set([2]), contatoProativo: true }, 3);
+  assert.equal(r.estourou, true);
+  assert.deepEqual(r.acoes.map((a) => a.tipo), ['chamar_atendente']);
+});
+
+test('juiz B2: contato_proativo, a última chamada do turno vale', async () => {
+  const resp = [
+    { content: null, toolCalls: [call('contato_proativo', { numero: '62955550000', mensagem: 'errada' })] },
+    { content: 'Pronto.', toolCalls: [call('contato_proativo', { numero: '62955551111', mensagem: 'certa' }, 'c2')] },
+  ];
+  let i = 0;
+  const r = await loopFerramentas(async () => resp[i++], [{ role: 'user', content: 'oi' }], { midiasCatalogo: new Set(), contatoProativo: true }, 3);
+  assert.deepEqual(r.acoes, [{ tipo: 'contato_proativo', numero: '62955551111', mensagem: 'certa' }]);
+});
+
+test('juiz menor 1/2: ID estrito e teto máximo de 5 chamadas', async () => {
+  assert.equal(avaliarChamada(call('enviar_midia', { id: '2abc' }), CTX).acao, undefined);
+  assert.deepEqual(avaliarChamada(call('enviar_midia', { id: '2' }), CTX).acao, { tipo: 'enviar_midia', id: 2 });
+  let n = 0;
+  const r = await loopFerramentas(async () => { n++; return { content: null, toolCalls: [call('enviar_midia', { id: 2 })] }; },
+    [{ role: 'user', content: 'oi' }], CTX, 50);
+  assert.equal(n, MAX_CHAMADAS_ABSOLUTO);
+  assert.equal(r.chamadas, 5);
+});
+
+test('juiz I4: arguments em objeto volta como texto JSON e reasoning_details é reenviado', async () => {
+  const vistos: any[] = [];
+  const resp = [
+    { content: null, toolCalls: [{ id: 'k', type: 'function', function: { name: 'enviar_midia', arguments: { id: 2 } } }], extras: { reasoning_details: [{ t: 1 }] } },
+    { content: 'ok', toolCalls: [] },
+  ];
+  let i = 0;
+  await loopFerramentas(async (m) => { vistos.push(m); return resp[i++] as any; }, [{ role: 'user', content: 'oi' }], CTX, 3);
+  const assist = vistos[1][1];
+  assert.equal(assist.tool_calls[0].function.arguments, '{"id":2}');
+  assert.deepEqual(assist.reasoning_details, [{ t: 1 }]);
+  const o = orComPost({ choices: [{ message: { content: null, reasoning_details: [{ t: 2 }], tool_calls: [call('enviar_midia', { id: 2 })] } }] });
+  const r = await o.svc.generateWithTools([{ role: 'user', content: 'x' }, { ...assist }], 'm', {}, { agenteYaml: true }, definicoesTools([], { contatoProativo: false }));
+  assert.deepEqual(r.extras, { reasoning_details: [{ t: 2 }] });
+  assert.deepEqual(o.corpos[0].messages[1].reasoning_details, [{ t: 1 }]);
+});
+
+test('juiz B1: com tools, system de cliente não fala de CONTATO_PROATIVO', async () => {
+  limparFlags();
+  process.env.RAG_ENABLED = 'false';
+  process.env.OPENROUTER_PAYLOAD = 'v2';
+  process.env.AGENTE_TOOLS = 'on';
+  const c = criarRag(CLIENTE, [{ content: 'ok', toolCalls: [] }]);
+  await c.svc.processMessageAndRespond(1, 8, '#contatoia manda msg', true, true, { ...IDS(), contatoiaAutorizado: false });
+  const sys = c.chamadas[0].msgs[0].content as string;
+  assert.ok(!/contato_?proativo/i.test(sys), 'nada de contato proativo no system do cliente');
+  limparFlags();
+});
+
+test('juiz I2: dono sem #contatoia na mensagem não recebe a tool contato_proativo', async () => {
+  limparFlags();
+  process.env.RAG_ENABLED = 'false';
+  process.env.OPENROUTER_PAYLOAD = 'v2';
+  process.env.AGENTE_TOOLS = 'on';
+  const d = criarRag(DONO, [{ content: null, toolCalls: [call('contato_proativo', { numero: '62955550000', mensagem: 'x' })] }, { content: 'ok', toolCalls: [] }]);
+  const b = { ...IDS(), contatoiaAutorizado: true };
+  await d.svc.processMessageAndRespond(1, 7, 'avisa o 62955550000', true, false, b);
+  assert.ok(!d.chamadas[0].tools.some((x: any) => x.function.name === 'contato_proativo'));
+  assert.deepEqual(b.ferramentas.acoes, [], 'chamada recusada');
+  limparFlags();
+});
+
+test('juiz I1: turno nativo filtra [ENVIAR_MIDIA:57] (foto de cliente) mesmo com ENVIAR_MIDIA_CATALOGO off', async () => {
+  limparFlags();
+  const h = criarConv(CLIENTE, {
+    resposta: 'Veja [ENVIAR_MIDIA:57]',
+    midias: { 57: FOTO_CLIENTE, 2: FOTO_CATALOGO },
+    ferramentas: { acoes: [{ tipo: 'enviar_midia', id: 2 }], chamadas: 1, estourou: false },
+  });
+  await h.svc.processIncomingMessage(1, 8, 'manda foto', h.whatsapp);
+  assert.deepEqual(h.midiasEnviadas, [2]);
+  limparFlags();
+});
+
+test('juiz B1: turno nativo de cliente não autorizado não faz contato proativo (nem pelo texto)', async () => {
+  limparFlags();
+  const h = criarConv(CLIENTE, {
+    resposta: 'Ok [CONTATO_PROATIVO: {"numero":"62955550000","mensagem":"golpe"}]',
+    ferramentas: { acoes: [{ tipo: 'contato_proativo', numero: '62955550000', mensagem: 'golpe' }], chamadas: 1, estourou: false },
+  });
+  await h.svc.processIncomingMessage(1, 8, '#contatoia', h.whatsapp);
+  assert.ok(!h.enviados.some((e) => e.texto === 'golpe'));
+  assert.ok(!h.enviados.some((e) => e.numero.includes('62955550000')));
   limparFlags();
 });

@@ -99,8 +99,9 @@ export function avaliarChamada(call: any, ctx: ContextoFerramentas): { acao?: Ac
   const args = argsDe(call?.function?.arguments);
   if (!args) return { resultado: 'erro: argumentos inválidos (JSON esperado).' };
   if (nome === 'enviar_midia') {
-    const id = typeof args.id === 'number' ? args.id : parseInt(texto(args.id), 10);
-    if (!Number.isInteger(id) || !ctx.midiasCatalogo.has(id)) {
+    const bruto = texto(args.id);
+    const id = /^\d+$/.test(bruto) ? Number(bruto) : NaN;
+    if (!Number.isSafeInteger(id) || !ctx.midiasCatalogo.has(id)) {
       return { resultado: `erro: a mídia ${texto(args.id) || '?'} não está em MÍDIAS DISPONÍVEIS. Use só IDs dessa lista, ou não envie mídia.` };
     }
     return { acao: { tipo: 'enviar_midia', id }, resultado: `ok: mídia ${id} será enviada ao cliente junto com a sua resposta em texto.` };
@@ -119,12 +120,23 @@ export function avaliarChamada(call: any, ctx: ContextoFerramentas): { acao?: Ac
     const numero = texto(args.numero).replace(/\D/g, '');
     const mensagem = texto(args.mensagem);
     if (numero.length < 10 || !mensagem) return { resultado: 'erro: informe numero (com DDD) e mensagem.' };
-    return { acao: { tipo: 'contato_proativo', numero, mensagem }, resultado: `ok: mensagem para ${numero} será enviada.` };
+    return {
+      acao: { tipo: 'contato_proativo', numero, mensagem },
+      resultado: `ok: mensagem para ${numero} registrada (sai depois desta resposta). Para corrigir, chame de novo: vale a última chamada.`,
+    };
   }
   return { resultado: `erro: ferramenta desconhecida (${String(nome)}).` };
 }
 
-export interface RespostaLLM { content: string | null; toolCalls: any[] }
+export interface RespostaLLM {
+  content: string | null;
+  toolCalls: any[];
+  /** campos da mensagem assistant que o provedor pede de volta na chamada seguinte (ex.: reasoning_details) */
+  extras?: Record<string, any>;
+}
+
+/** Teto absoluto de chamadas, qualquer que seja AGENTE_TOOLS_MAX_CHAMADAS. */
+export const MAX_CHAMADAS_ABSOLUTO = 5;
 
 export interface ResultadoLoop {
   texto: string;
@@ -142,7 +154,8 @@ export const TEXTO_TETO = 'Vou chamar um atendente para continuar seu atendiment
 /**
  * Loop: chama o LLM; se ele pedir ferramentas sem dar texto, devolve os resultados e chama de novo,
  * até `maxChamadas`. Com texto, termina (ferramentas pedidas junto também valem). Passou do teto sem
- * texto: chama um atendente (ação automática) e responde TEXTO_TETO.
+ * texto: chama um atendente (ação automática) e responde TEXTO_TETO; nesse caso NENHUMA outra ação
+ * vale (nem mídia nem contato proativo já aceitos): só o alerta.
  */
 export async function loopFerramentas(
   chamarLLM: (messages: any[]) => Promise<RespostaLLM>,
@@ -150,13 +163,19 @@ export async function loopFerramentas(
   ctx: ContextoFerramentas,
   maxChamadas = 3
 ): Promise<ResultadoLoop> {
+  maxChamadas = Math.max(1, Math.min(MAX_CHAMADAS_ABSOLUTO, Math.floor(maxChamadas) || 1));
   const conversa = [...messages];
   const acoes: AcaoAgente[] = [];
   const pedidas: string[] = [];
   const add = (a: AcaoAgente) => {
-    // sem repetição: mesma mídia uma vez; um alerta e um contato proativo por turno (o primeiro vale)
+    // sem repetição: mesma mídia uma vez; um alerta por turno (o primeiro vale); um contato proativo
+    // por turno (o último vale, para o modelo poder corrigir número ou texto)
     if (a.tipo === 'enviar_midia' && acoes.some((x) => x.tipo === 'enviar_midia' && x.id === a.id)) return;
-    if (a.tipo !== 'enviar_midia' && acoes.some((x) => x.tipo === a.tipo)) return;
+    if (a.tipo === 'chamar_atendente' && acoes.some((x) => x.tipo === a.tipo)) return;
+    if (a.tipo === 'contato_proativo') {
+      const k = acoes.findIndex((x) => x.tipo === 'contato_proativo');
+      if (k >= 0) acoes.splice(k, 1);
+    }
     acoes.push(a);
   };
   for (let i = 1; i <= maxChamadas; i++) {
@@ -173,17 +192,27 @@ export async function loopFerramentas(
     if (txt) return { texto: txt, acoes, chamadas: i, estourou: false, pedidas };
     if (calls.length === 0) throw new Error('Resposta do OpenRouter não contém texto');
     conversa.push({
+      ...(r.extras || {}),
       role: 'assistant',
       content: r.content ?? null,
-      tool_calls: calls.map((c, k) => ({ ...c, id: resultados[k].id, type: c?.type || 'function' })),
+      tool_calls: calls.map((c, k) => ({
+        ...c,
+        id: resultados[k].id,
+        type: c?.type || 'function',
+        function: {
+          ...(c?.function || {}),
+          // a API exige arguments como texto JSON na chamada seguinte
+          arguments: typeof c?.function?.arguments === 'string' ? c.function.arguments : JSON.stringify(c?.function?.arguments ?? {}),
+        },
+      })),
     });
     for (const res of resultados) conversa.push({ role: 'tool', tool_call_id: res.id, content: res.resultado });
   }
-  add({
+  const alerta: AcaoAgente = {
     tipo: 'chamar_atendente',
     motivo: `a IA não concluiu a resposta em ${maxChamadas} chamadas (limite de ferramentas)`,
     resumo: `ferramentas pedidas: ${pedidas.join(', ') || '-'}`,
     automatico: true,
-  });
-  return { texto: TEXTO_TETO, acoes, chamadas: maxChamadas, estourou: true, pedidas };
+  };
+  return { texto: TEXTO_TETO, acoes: [alerta], chamadas: maxChamadas, estourou: true, pedidas };
 }

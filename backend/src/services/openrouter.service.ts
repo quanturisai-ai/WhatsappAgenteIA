@@ -212,7 +212,7 @@ export class OpenRouterService {
     options: GenOptions,
     extra: GenExtra | undefined,
     tools: any[],
-  ): Promise<{ content: string | null; toolCalls: any[] }> {
+  ): Promise<{ content: string | null; toolCalls: any[]; extras?: Record<string, any> }> {
     return this.chatCall(messages as any, undefined, model, options, extra, tools);
   }
 
@@ -223,7 +223,7 @@ export class OpenRouterService {
     options: GenOptions,
     extra: GenExtra | undefined,
     tools?: any[],
-  ): Promise<{ content: string | null; toolCalls: any[] }> {
+  ): Promise<{ content: string | null; toolCalls: any[]; extras?: Record<string, any> }> {
     const generationModel = model || this.defaultGenerationModel;
     try {
       // Item 3: lista de mensagens (system + histórico user/assistant + atual) vai como está.
@@ -233,6 +233,7 @@ export class OpenRouterService {
           const out: any = { role: m.role, content: m.content };
           if (m.tool_calls) out.tool_calls = m.tool_calls;
           if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
+          if (m.reasoning_details) out.reasoning_details = m.reasoning_details;
           return out;
         })
         : [{ role: 'user', content: context ? `Contexto: ${context}\n\nPergunta: ${prompt}\n\nResposta:` : prompt }];
@@ -297,7 +298,9 @@ export class OpenRouterService {
         ...usageFields(response.data?.usage),
       });
       if (temTexto || toolCalls.length > 0) {
-        return { content: temTexto ? content : null, toolCalls };
+        // Item 6: o provedor pode exigir reasoning_details de volta na chamada seguinte do loop.
+        const extras = tools && toolCalls.length && message?.reasoning_details ? { reasoning_details: message.reasoning_details } : undefined;
+        return { content: temTexto ? content : null, toolCalls, ...(extras ? { extras } : {}) };
       }
 
       throw new Error('Resposta do OpenRouter não contém texto');

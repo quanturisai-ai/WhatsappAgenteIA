@@ -84,6 +84,9 @@ export function parseAgenteYaml(text: string): AgenteYaml {
     if (!fn || !str(fn.instrucao) || !Array.isArray(fn.lista) || fn.lista.length === 0) erro('ferramentas_nativas');
     if (fn.lista.some((f: any) => !f || !nomes.includes(f.nome) || !str(f.descricao))) erro('ferramentas_nativas.lista');
     if (new Set(fn.lista.map((f: any) => f.nome)).size !== fn.lista.length) erro('ferramentas_nativas repetidas');
+    // A instrução e as descrições (menos a do contato_proativo) vão no system de TODO cliente.
+    const publico = [fn.instrucao, ...fn.lista.filter((f: any) => f.nome !== 'contato_proativo').map((f: any) => f.descricao)].join(' ');
+    if (/contato_?proativo/i.test(publico)) erro('ferramentas_nativas não pode citar o contato proativo fora da descrição dele');
   }
   if (!doc.handoff || !Array.isArray(doc.handoff.quando) || doc.handoff.quando.length === 0 || doc.handoff.quando.some((q: any) => !str(q))) erro('handoff');
   if (typeof doc.handoff.pausar_ia !== 'boolean') erro('handoff.pausar_ia');

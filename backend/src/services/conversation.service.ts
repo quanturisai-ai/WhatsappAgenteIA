@@ -392,7 +392,9 @@ export class ConversationService {
       }
 
       // Processar contato proativo (se houver)
-      if (proactiveContact && !proactiveAllowed) {
+      // Item 6: com tools nativas, contato proativo (da tool ou do texto) só para dono/atendente, mesmo com
+      // CONTATOIA_RESTRICT=off (o system de todo cliente passa a falar de ferramentas).
+      if (proactiveContact && (!proactiveAllowed || (nativo && !senderAuthorized))) {
         logger.warn(`CONTATO_PROATIVO bloqueado na conversa ${conversationId} (remetente não autorizado); nada foi enviado`);
       } else if (proactiveContact && acoesSimuladas(conversation.contact_number)) {
         // Item 6 (AGENTE_ACOES_SIMULADAS): conversa de teste, nada é enviado a ninguém.
@@ -446,7 +448,8 @@ export class ConversationService {
             
             const media = await this.mediaModel.findById(mediaId);
             // Item 6 (ENVIAR_MIDIA_CATALOGO=on): só mídia do catálogo (ativa, de saída); nunca foto de outro cliente.
-            const permitida = enviarMidiaSoCatalogo()
+            // Com tools nativas, sempre o catálogo (o ID do texto não passa pela validação do loop).
+            const permitida = enviarMidiaSoCatalogo() || nativo
               ? midiaNoCatalogo(media as any, userId)
               : !!media && media.user_id === userId && media.status === 'completed';
             if (media && permitida) {

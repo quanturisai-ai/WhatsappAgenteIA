@@ -102,7 +102,7 @@ export class HumanAttendantService {
         const { ConversationModel } = await import('../models/conversation.model');
         const conv = await new ConversationModel().findById(conversationId);
         if (acoesSimuladas(conv?.contact_number)) {
-          logger.info(`[simulado] ALERTA da conversa ${conversationId} NÃO enviado a atendentes: ${alertMessage.slice(0, 200)}`);
+          logger.info(`[simulado] ALERTA da conversa ${conversationId} NÃO enviado a atendentes (${alertMessage.length} caracteres)`);
           return {
             id: 0,
             user_id: userId,

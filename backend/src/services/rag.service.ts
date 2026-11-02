@@ -13,7 +13,7 @@ import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
 import { agenteToolsAppliesTo, agenteToolsMode, agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, openrouterPayloadV2, ragEnabledMode, ragMidiaIdFix } from '../utils/agentFlags';
-import { AcaoAgente, definicoesTools, loopFerramentas, midiaNoCatalogo } from './agenteTools';
+import { AcaoAgente, definicoesTools, loopFerramentas, MAX_CHAMADAS_ABSOLUTO, midiaNoCatalogo } from './agenteTools';
 import { PlanoMidias, alertaVideoGrande, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
 import fs from 'fs';
 import { currentTurn } from '../utils/turnMetrics';
@@ -634,11 +634,13 @@ export class RAGService {
     }
     logger.info(`[agente.yaml] conversa ${conversationId}: system ${sys.hash} (${sys.text.length} chars, ${sys.topicos.length} tópicos, ${sys.midias.length} mídias${sys.reservadosIncluidos.length ? `, reservados ${sys.reservadosIncluidos.join(',')}` : ''}), histórico ${history.length}`);
     let tools: AgenteYamlTurno['tools'];
+    // contato_proativo só para dono/atendente autorizado E com #contatoia na mensagem deste turno.
+    const contatoTool = incluirReservados && /#contatoia/i.test(userMessage || '');
     if (usarTools) {
       tools = {
-        defs: definicoesTools(cfg.ferramentas_nativas?.lista, { contatoProativo: incluirReservados }),
+        defs: definicoesTools(cfg.ferramentas_nativas?.lista, { contatoProativo: contatoTool }),
         midiasCatalogo: new Set(sys.midias),
-        contatoProativo: incluirReservados,
+        contatoProativo: contatoTool,
       };
       if (ctx) ctx.meta.tools = { modo: 'nativo' };
     }
@@ -1184,7 +1186,7 @@ export class RAGService {
             (msgs) => this.ollamaService.generateWithTools(msgs, modeloTurno, generationOptions, extra, t.defs),
             llmInput as any[],
             { midiasCatalogo: t.midiasCatalogo, contatoProativo: t.contatoProativo },
-            envInt('AGENTE_TOOLS_MAX_CHAMADAS', 3, 1)
+            Math.min(envInt('AGENTE_TOOLS_MAX_CHAMADAS', 3, 1), MAX_CHAMADAS_ABSOLUTO)
           );
           responseText = r.texto;
           batch.ferramentas = { acoes: r.acoes, chamadas: r.chamadas, estourou: r.estourou };
@@ -1401,6 +1403,8 @@ export class RAGService {
     } catch (error: any) {
       // Item 2: turno cancelado por mensagem nova -> sem fallback (seria uma 2ª chamada à toa).
       if (isTurnAbort(error)) throw error;
+      // Item 6: resposta de fallback não leva ações das ferramentas (o texto delas se perdeu).
+      delete batch.ferramentas;
       logger.error(`Erro ao processar mensagem: ${error.message}`);
       // Item 5: vídeo que a IA não viu chama o atendente mesmo no fallback.
       const comAlerta = (r: string) => {
