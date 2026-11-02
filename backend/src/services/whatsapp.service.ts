@@ -75,6 +75,8 @@ export class WhatsAppService extends EventEmitter {
   // Debounce de mensagens: agrupa várias mensagens curtas do cliente antes de processar com a IA
   private responseTimers: Map<number, NodeJS.Timeout> = new Map();
   private pendingMessages: Map<number, string[]> = new Map();
+  // Item 1 (métricas): hora da 1ª mensagem do lote, para medir a espera do debounce.
+  private pendingFirstAt: Map<number, number> = new Map();
   // Contador de erros consecutivos no keep-alive
   private keepAliveErrorCount: number = 0;
   // 4 tentativas x 15 min = 1 hora antes de marcar como connection_failed
@@ -2504,6 +2506,7 @@ export class WhatsAppService extends EventEmitter {
       const pending = this.pendingMessages.get(convId) || [];
       pending.push(currentContent);
       this.pendingMessages.set(convId, pending);
+      if (!this.pendingFirstAt.has(convId)) this.pendingFirstAt.set(convId, Date.now());
 
       const existingTimer = this.responseTimers.get(convId);
       if (existingTimer) {
@@ -2515,6 +2518,8 @@ export class WhatsAppService extends EventEmitter {
         this.responseTimers.delete(convId);
         const messages = this.pendingMessages.get(convId) || [];
         this.pendingMessages.delete(convId);
+        const firstAt = this.pendingFirstAt.get(convId);
+        this.pendingFirstAt.delete(convId);
         if (messages.length === 0) return;
         const consolidated = messages.join('\n').trim();
         if (!consolidated) return;
@@ -2525,7 +2530,8 @@ export class WhatsAppService extends EventEmitter {
           this.userId,
           convId,
           consolidated,
-          this
+          this,
+          { debounceMs: firstAt ? Date.now() - firstAt : 0, batchSize: messages.length }
         ).catch((error: any) => {
           logger.error(`Erro ao processar mensagem automaticamente: ${error.message}`);
         });

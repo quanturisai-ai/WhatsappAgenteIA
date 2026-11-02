@@ -9,6 +9,7 @@ import { MediaSentTrackingModel } from '../models/mediaSentTracking.model';
 import { HumanAttendantService } from './humanAttendant.service';
 import { normalizePhoneNumber } from '../utils/phoneUtils';
 import { contatoiaRestricted, isOwnerNumber, phonesMatch } from '../utils/agentFlags';
+import { currentTurn, runMeasuredTurn, timeStage } from '../utils/turnMetrics';
 import logger from '../utils/logger';
 
 export interface ConversationStatus {
@@ -133,6 +134,34 @@ export class ConversationService {
     userId: number,
     conversationId: number,
     messageContent: string,
+    whatsappService: WhatsAppService,
+    turnMeta: { debounceMs?: number; batchSize?: number } = {}
+  ): Promise<void> {
+    // Item 1 (TURN_METRICS=on): mede o turno e grava uma linha em logs/turnos.jsonl.
+    return runMeasuredTurn(
+      {
+        user_id: userId,
+        conversation_id: conversationId,
+        mensagens_no_lote: turnMeta.batchSize ?? 1,
+        chars_in: messageContent.length,
+        ...(typeof turnMeta.debounceMs === 'number' ? { debounce_ms: turnMeta.debounceMs } : {}),
+      },
+      () => this.processIncomingMessageInner(userId, conversationId, messageContent, whatsappService)
+    );
+  }
+
+  /** Envio da resposta da IA, medido como etapa "envio" do turno. */
+  private async measuredSend<T>(fn: () => Promise<T>): Promise<T> {
+    const result = await timeStage('envio', fn);
+    const ctx = currentTurn();
+    if (ctx) ctx.sends++;
+    return result;
+  }
+
+  private async processIncomingMessageInner(
+    userId: number,
+    conversationId: number,
+    messageContent: string,
     whatsappService: WhatsAppService
   ): Promise<void> {
     try {
@@ -140,6 +169,8 @@ export class ConversationService {
       const isAutoResponding = await this.isAutoResponding(conversationId);
       if (!isAutoResponding) {
         logger.info(`Respostas automáticas pausadas para conversa ${conversationId} - ignorando mensagem`);
+        const ctx = currentTurn();
+        if (ctx) ctx.outcome = 'pausado';
         return;
       }
 
@@ -152,7 +183,9 @@ export class ConversationService {
       }
 
       // Enviar mídias obrigatórias ANTES da resposta da IA
-      await this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService, conversation.lid);
+      await timeStage('midias_obrigatorias', () =>
+        this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService, conversation.lid)
+      );
 
       // Detectar comando #contatoia (não remover da mensagem, apenas detectar)
       let hasContatoIA = messageContent.toLowerCase().includes('#contatoia');
@@ -169,6 +202,8 @@ export class ConversationService {
         hasContatoIA = false;
         if (!messageContent) {
           logger.info(`Mensagem só tinha #contatoia (recusado) na conversa ${conversationId} - sem resposta`);
+          const ctx = currentTurn();
+          if (ctx) ctx.outcome = 'contatoia_recusado';
           return;
         }
       }
@@ -182,7 +217,7 @@ export class ConversationService {
       // Adicionar timeout para evitar que processos travados causem problemas
       let response: string;
       try {
-        response = await Promise.race([
+        response = await timeStage('geracao', () => Promise.race([
           this.ragService.processMessageAndRespond(
             userId,
             conversationId,
@@ -193,7 +228,7 @@ export class ConversationService {
           new Promise<string>((_, reject) =>
             setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
           )
-        ]);
+        ]));
       } catch (ragError: any) {
         // A IA não conseguiu gerar resposta (falha ou timeout do RAG). Antes, a conversa
         // já tinha sido marcada 'in_progress' no início desta função, então o card ficava
@@ -201,6 +236,8 @@ export class ConversationService {
         // silencioso). Agora: nenhuma mensagem foi enviada ainda, então o status permanece
         // o que já era; marcamos precisa-intervenção para o atendente ser avisado.
         logger.error(`Erro ao gerar resposta via RAG para conversa ${conversationId}: ${ragError.message}`);
+        const ctx = currentTurn();
+        if (ctx) ctx.outcome = 'erro_geracao';
         await this.conversationModel.update(conversationId, {
           needs_intervention: true,
         });
@@ -304,7 +341,9 @@ export class ConversationService {
               // Se houver múltiplas mídias, usar a mesma resposta para todas
               const caption = cleanedResponse.trim() || undefined;
               
-              await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId, 0, conversation.lid, 'ai', { conversationId });
+              await this.measuredSend(() =>
+                whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, true, mediaId, 0, conversation.lid, 'ai', { conversationId })
+              );
               
               // Registrar que a mídia foi enviada (para estatísticas, mas não bloqueia reenvio)
               await this.mediaSentTrackingModel.markMediaAsSent(conversationId, mediaId);
@@ -328,12 +367,16 @@ export class ConversationService {
           // Nenhuma mídia foi enviada (todas falharam ou não foram encontradas)
           // Enviar a mensagem de texto normalmente para o cliente não ficar sem resposta
           logger.warn(`Nenhuma mídia foi enviada com sucesso - enviando resposta da IA como mensagem de texto`);
-          await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId });
+          await this.measuredSend(() =>
+            whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId })
+          );
         }
       } else {
         // Se não houver mídias, enviar resposta via WhatsApp normalmente
         // Não salvar manualmente aqui - o handleOutgoingMessage vai salvar automaticamente
-        await whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId });
+        await this.measuredSend(() =>
+          whatsappService.sendMessage(conversation.contact_number, cleanedResponse, true, false, conversation.lid, 'ai', { conversationId })
+        );
       }
 
       // Só marcar a conversa como 'in_progress' (IA atendendo) DEPOIS do envio ter sido

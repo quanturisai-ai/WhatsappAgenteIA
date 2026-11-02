@@ -1,4 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
+import { recordLlmCall, usageFields } from '../utils/turnMetrics';
+import { turnMetricsEnabled } from '../utils/agentFlags';
 import logger from '../utils/logger';
 
 export class OpenRouterService {
@@ -38,12 +40,27 @@ export class OpenRouterService {
    */
   async generateEmbedding(text: string, model?: string): Promise<number[]> {
     const embeddingModel = model || this.defaultEmbeddingModel;
+    const tEmb = Date.now();
     try {
       logger.debug(`Gerando embedding com modelo: ${embeddingModel}`);
 
-      const response = await this.axiosInstance.post('/embeddings', {
-        model: embeddingModel,
-        input: text,
+      let response: any;
+      try {
+        response = await this.axiosInstance.post('/embeddings', {
+          model: embeddingModel,
+          input: text,
+        });
+      } catch (postError) {
+        recordLlmCall({ kind: 'embedding', model: embeddingModel, ms: Date.now() - tEmb, ok: false });
+        throw postError;
+      }
+      recordLlmCall({
+        kind: 'embedding',
+        model: response.data?.model || embeddingModel,
+        provider: response.data?.provider ?? null,
+        ms: Date.now() - tEmb,
+        ok: true,
+        ...usageFields(response.data?.usage),
       });
 
       const data = response.data?.data;
@@ -190,6 +207,11 @@ export class OpenRouterService {
         // lento (2-18 s) e com 3/10 respostas vazias; o mais rápido respondeu em <1,5 s, 5/5 e mais barato.
         provider: { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' },
       };
+      // Item 1 (TURN_METRICS): pede o usage completo (custo/cache). O OpenRouter já o devolve
+      // por padrão; o campo é aceito e só deixa explícito.
+      if (turnMetricsEnabled()) {
+        body.usage = { include: true };
+      }
 
       if (options?.temperature !== undefined) {
         body.temperature = typeof options.temperature === 'string'
@@ -222,11 +244,25 @@ export class OpenRouterService {
       logger.debug(`[OpenRouter] Payload: ${JSON.stringify(body)}`);
 
       const t0 = Date.now();
-      const response = await this.axiosInstance.post('/chat/completions', body);
+      let response: any;
+      try {
+        response = await this.axiosInstance.post('/chat/completions', body);
+      } catch (postError) {
+        recordLlmCall({ kind: 'chat', model: generationModel, ms: Date.now() - t0, ok: false });
+        throw postError;
+      }
       const elapsed = Date.now() - t0;
       logger.debug(`[OpenRouter] Resposta recebida em ${elapsed}ms`);
 
       const content = response.data?.choices?.[0]?.message?.content;
+      recordLlmCall({
+        kind: 'chat',
+        model: response.data?.model || generationModel,
+        provider: response.data?.provider ?? null,
+        ms: elapsed,
+        ok: typeof content === 'string' && content.length > 0,
+        ...usageFields(response.data?.usage),
+      });
       if (typeof content === 'string' && content.length > 0) {
         return content;
       }
