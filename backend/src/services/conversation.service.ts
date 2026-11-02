@@ -2,13 +2,15 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { WhatsAppService } from './whatsapp.service';
 import { emitConversationUpdated } from '../utils/conversationSocketEmitter';
-import { RAGService } from './rag.service';
+import { RAGService, TurnBatchInfo } from './rag.service';
 import { AgentConfigModel } from '../models/agentConfig.model';
 import { MediaModel } from '../models/media.model';
 import { MediaSentTrackingModel } from '../models/mediaSentTracking.model';
 import { HumanAttendantService } from './humanAttendant.service';
 import { normalizePhoneNumber } from '../utils/phoneUtils';
-import { contatoiaRestricted, isOwnerNumber, phonesMatch, ragEnabledMode } from '../utils/agentFlags';
+import { acoesSimuladas, agenteToolsRegexReserva, chamarAtendentePausaAppliesTo, contatoiaRestricted, enviarMidiaSoCatalogo, isOwnerNumber, phonesMatch, ragEnabledMode } from '../utils/agentFlags';
+import { midiaNoCatalogo } from './agenteTools';
+import { loadAgenteYaml } from './agentePrompt';
 import { currentTurn, runMeasuredTurn, timeStage } from '../utils/turnMetrics';
 import { TurnControl, isTurnAbort, runWithTurnControl } from '../utils/turnControl';
 import logger from '../utils/logger';
@@ -64,6 +66,24 @@ export class ConversationService {
       return attendants.some((a: any) => !!Number(a.is_active) && phonesMatch(a.phone_number, contactNumber));
     } catch (error: any) {
       logger.error(`Erro ao verificar autorização do #contatoia: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Item 6: chamar o atendente pausa a IA? Só se CHAMAR_ATENDENTE_PAUSA valer para o contato, o
+   * agente.yaml tiver handoff.pausar_ia = true e o painel não tiver pause_on_human_reply desligado.
+   * Qualquer erro = não pausa (comportamento antigo).
+   */
+  private async handoffPausaIA(userId: number, contactNumber: string | null | undefined): Promise<boolean> {
+    if (!chamarAtendentePausaAppliesTo(contactNumber)) return false;
+    try {
+      if (loadAgenteYaml().handoff.pausar_ia !== true) return false;
+      const cfg: any = await this.agentConfigModel.findByUserId(userId);
+      const v = cfg?.pause_on_human_reply;
+      return !(v === false || v === 0 || v === '0');
+    } catch (error: any) {
+      logger.warn(`[tools] não deu para conferir a config de pausa: ${error.message}; IA não pausada`);
       return false;
     }
   }
@@ -254,6 +274,14 @@ export class ConversationService {
       // Gerar resposta usando RAG
       // Adicionar timeout para evitar que processos travados causem problemas
       let response: string;
+      // Item 6: o RAGService devolve aqui as ações das tools nativas (quando AGENTE_TOOLS vale).
+      const batchInfo: TurnBatchInfo = {
+        batchDbIds: turnMeta.batchDbIds,
+        batchMessageIds: turnMeta.batchMessageIds,
+        // Item 4: instruções do #contatoia no system só para dono/atendente, sempre
+        // (mesmo com CONTATOIA_RESTRICT=off; o caminho antigo, RAG_ENABLED=true, não usa isto).
+        contatoiaAutorizado: senderAuthorized,
+      };
       try {
         response = await timeStage('geracao', () => Promise.race([
           this.ragService.processMessageAndRespond(
@@ -262,13 +290,7 @@ export class ConversationService {
             messageContent, // Usar mensagem ORIGINAL (com #contatoia)
             true, // usar RAG
             includeHistory, // Passar flag para incluir ou não histórico
-            {
-              batchDbIds: turnMeta.batchDbIds,
-              batchMessageIds: turnMeta.batchMessageIds,
-              // Item 4: instruções do #contatoia no system só para dono/atendente, sempre
-              // (mesmo com CONTATOIA_RESTRICT=off; o caminho antigo, RAG_ENABLED=true, não usa isto).
-              contatoiaAutorizado: senderAuthorized,
-            }
+            batchInfo
           ),
           new Promise<string>((_, reject) =>
             setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
@@ -308,17 +330,32 @@ export class ConversationService {
       }
       if (turnMeta.control) await sendMandatory();
 
+      // Item 6: com tools nativas, os comandos no texto ficam como reserva (AGENTE_TOOLS_REGEX=on) ou só
+      // são retirados do texto (off). Sem tools nativas (ou no fallback), o regex vale como antes.
+      const nativo = batchInfo.ferramentas;
+      const regexVale = !nativo || agenteToolsRegexReserva();
+
       // Processar comandos de alerta de atendente na resposta da IA
-      const alertMessage = this.extractAlertCommand(response);
+      let alertMessage = regexVale ? this.extractAlertCommand(response) : null;
       let cleanedResponse = this.removeAlertCommand(response);
 
       // Processar comando de contato proativo (se houver)
-      const proactiveContact = this.extractProactiveContactCommand(cleanedResponse);
+      let proactiveContact = regexVale ? this.extractProactiveContactCommand(cleanedResponse) : null;
       cleanedResponse = this.removeProactiveContactCommand(cleanedResponse);
 
       // Processar comandos de envio de mídias na resposta da IA
-      const mediaIds = this.extractMediaCommands(cleanedResponse);
+      let mediaIds = regexVale ? this.extractMediaCommands(cleanedResponse) : [];
       cleanedResponse = this.removeMediaCommands(cleanedResponse);
+
+      if (nativo) {
+        // Ações das ferramentas (já validadas no loop) valem sobre o comando no texto do mesmo tipo.
+        for (const a of nativo.acoes) {
+          if (a.tipo === 'chamar_atendente') alertMessage = `${a.motivo.replace(/[.\s]+$/, '')}. Resumo: ${a.resumo || '-'}`;
+          else if (a.tipo === 'contato_proativo') proactiveContact = { numero: a.numero, mensagem: a.mensagem };
+        }
+        const nativas = nativo.acoes.filter((a) => a.tipo === 'enviar_midia').map((a: any) => a.id as number);
+        mediaIds = [...new Set([...nativas, ...mediaIds])];
+      }
 
       // Processar alerta de atendente (se houver)
       if (alertMessage) {
@@ -340,6 +377,14 @@ export class ConversationService {
           });
 
           logger.info(`✅ Alerta de atendente enviado e conversa ${conversationId} marcada como precisa intervenção`);
+
+          // Item 6 (CHAMAR_ATENDENTE_PAUSA): passa a conversa para o humano de verdade (só com alerta entregue).
+          if (await this.handoffPausaIA(userId, conversation.contact_number)) {
+            await this.pauseAutoResponding(conversationId);
+            logger.info(`[tools] IA pausada na conversa ${conversationId} após chamar o atendente (reativar pelo painel)`);
+            const ctx = currentTurn();
+            if (ctx) ctx.meta.pausou_ia = true;
+          }
         } catch (error: any) {
           logger.error(`Erro ao processar alerta de atendente: ${error.message}`);
           // Não bloquear o envio da resposta mesmo se o alerta falhar
@@ -349,6 +394,9 @@ export class ConversationService {
       // Processar contato proativo (se houver)
       if (proactiveContact && !proactiveAllowed) {
         logger.warn(`CONTATO_PROATIVO bloqueado na conversa ${conversationId} (remetente não autorizado); nada foi enviado`);
+      } else if (proactiveContact && acoesSimuladas(conversation.contact_number)) {
+        // Item 6 (AGENTE_ACOES_SIMULADAS): conversa de teste, nada é enviado a ninguém.
+        logger.info(`[simulado] CONTATO_PROATIVO da conversa ${conversationId} para ${String(proactiveContact.numero).replace(/\d(?=\d{4})/g, '*')} NÃO enviado (${proactiveContact.mensagem.length} caracteres)`);
       } else if (proactiveContact) {
         try {
           logger.info(`📞 IA solicitou contato proativo para número: ${proactiveContact.numero}`);
@@ -397,7 +445,11 @@ export class ConversationService {
             // Não verificar se já foi enviada - isso só se aplica a mídias obrigatórias (mandatory_send)
             
             const media = await this.mediaModel.findById(mediaId);
-            if (media && media.user_id === userId && media.status === 'completed') {
+            // Item 6 (ENVIAR_MIDIA_CATALOGO=on): só mídia do catálogo (ativa, de saída); nunca foto de outro cliente.
+            const permitida = enviarMidiaSoCatalogo()
+              ? midiaNoCatalogo(media as any, userId)
+              : !!media && media.user_id === userId && media.status === 'completed';
+            if (media && permitida) {
               // Usar a resposta limpa da IA como caption (não a descrição da mídia)
               // Se houver múltiplas mídias, usar a mesma resposta para todas
               const caption = cleanedResponse.trim() || undefined;

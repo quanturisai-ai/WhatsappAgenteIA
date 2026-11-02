@@ -2,6 +2,7 @@ import { HumanAttendantModel } from '../models/humanAttendant.model';
 import { AttendantAlertModel } from '../models/attendantAlert.model';
 import { HumanAttendant, AttendantAlert } from '../types';
 import logger from '../utils/logger';
+import { acoesSimuladas } from '../utils/agentFlags';
 import { WhatsAppService } from './whatsapp.service';
 
 export class HumanAttendantService {
@@ -95,6 +96,24 @@ export class HumanAttendantService {
     whatsappService?: WhatsAppService
   ): Promise<AttendantAlert> {
     try {
+      // Item 6 (AGENTE_ACOES_SIMULADAS): conversa de teste = alerta só no log, sem registro e sem
+      // mensagem a atendente real. Lista vazia (padrão) = nem consulta a conversa (comportamento antigo).
+      if ((process.env.AGENTE_ACOES_SIMULADAS || '').trim()) {
+        const { ConversationModel } = await import('../models/conversation.model');
+        const conv = await new ConversationModel().findById(conversationId);
+        if (acoesSimuladas(conv?.contact_number)) {
+          logger.info(`[simulado] ALERTA da conversa ${conversationId} NÃO enviado a atendentes: ${alertMessage.slice(0, 200)}`);
+          return {
+            id: 0,
+            user_id: userId,
+            conversation_id: conversationId,
+            topic_id: topicId || null,
+            alert_message: alertMessage,
+            sent_at: new Date(),
+          };
+        }
+      }
+
       // Buscar todos os atendentes ativos
       const attendants = await this.attendantModel.findByUserId(userId);
       const activeAttendants = attendants.filter(a => a.is_active);
