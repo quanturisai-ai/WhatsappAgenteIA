@@ -8,6 +8,7 @@ import { MediaModel } from '../models/media.model';
 import { MediaSentTrackingModel } from '../models/mediaSentTracking.model';
 import { HumanAttendantService } from './humanAttendant.service';
 import { normalizePhoneNumber } from '../utils/phoneUtils';
+import { contatoiaRestricted, isOwnerNumber, phonesMatch } from '../utils/agentFlags';
 import logger from '../utils/logger';
 
 export interface ConversationStatus {
@@ -33,6 +34,21 @@ export class ConversationService {
     this.mediaModel = new MediaModel();
     this.mediaSentTrackingModel = new MediaSentTrackingModel();
     this.humanAttendantService = new HumanAttendantService();
+  }
+
+  /**
+   * #contatoia / CONTATO_PROATIVO: autorizado se o número for do dono (CONTATOIA_OWNER_NUMBERS)
+   * ou de um atendente humano ativo. Em caso de erro, nega (conservador).
+   */
+  private async isContatoiaAuthorized(userId: number, contactNumber: string): Promise<boolean> {
+    if (isOwnerNumber(contactNumber)) return true;
+    try {
+      const attendants = await this.humanAttendantService.getAttendants(userId);
+      return attendants.some((a: any) => !!Number(a.is_active) && phonesMatch(a.phone_number, contactNumber));
+    } catch (error: any) {
+      logger.error(`Erro ao verificar autorização do #contatoia: ${error.message}`);
+      return false;
+    }
   }
 
   /**
@@ -139,8 +155,23 @@ export class ConversationService {
       await this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService, conversation.lid);
 
       // Detectar comando #contatoia (não remover da mensagem, apenas detectar)
-      const hasContatoIA = messageContent.toLowerCase().includes('#contatoia');
+      let hasContatoIA = messageContent.toLowerCase().includes('#contatoia');
       let includeHistory = true;
+
+      // CONTATOIA_RESTRICT=on: #contatoia e CONTATO_PROATIVO só para o dono ou atendente ativo.
+      // Para os demais, o comando é retirado da mensagem (turno normal, com histórico).
+      const proactiveAllowed = contatoiaRestricted()
+        ? await this.isContatoiaAuthorized(userId, conversation.contact_number)
+        : true;
+      if (hasContatoIA && !proactiveAllowed) {
+        logger.warn(`#contatoia recusado na conversa ${conversationId}: remetente não é dono nem atendente`);
+        messageContent = messageContent.replace(/#contatoia/gi, '').replace(/\s{2,}/g, ' ').trim();
+        hasContatoIA = false;
+        if (!messageContent) {
+          logger.info(`Mensagem só tinha #contatoia (recusado) na conversa ${conversationId} - sem resposta`);
+          return;
+        }
+      }
 
       if (hasContatoIA) {
         includeHistory = false;
@@ -218,7 +249,9 @@ export class ConversationService {
       }
 
       // Processar contato proativo (se houver)
-      if (proactiveContact) {
+      if (proactiveContact && !proactiveAllowed) {
+        logger.warn(`CONTATO_PROATIVO bloqueado na conversa ${conversationId} (remetente não autorizado); nada foi enviado`);
+      } else if (proactiveContact) {
         try {
           logger.info(`📞 IA solicitou contato proativo para número: ${proactiveContact.numero}`);
           logger.debug(`Mensagem proativa: ${proactiveContact.mensagem.substring(0, 100)}...`);
