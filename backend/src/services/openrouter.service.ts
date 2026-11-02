@@ -2,6 +2,13 @@ import axios, { AxiosInstance } from 'axios';
 import { recordLlmCall, usageFields } from '../utils/turnMetrics';
 import { turnMetricsEnabled } from '../utils/agentFlags';
 import logger from '../utils/logger';
+import { currentTurnControl, isTurnAbort } from '../utils/turnControl';
+
+/** Item 2: chamada dentro de um turno do agendador leva o sinal de cancelamento (mensagem nova). */
+function requestOptions(): [] | [{ signal: AbortSignal }] {
+  const ctl = currentTurnControl();
+  return ctl ? [{ signal: ctl.signal }] : [];
+}
 
 export class OpenRouterService {
   private baseUrl: string;
@@ -49,7 +56,7 @@ export class OpenRouterService {
         response = await this.axiosInstance.post('/embeddings', {
           model: embeddingModel,
           input: text,
-        });
+        }, ...requestOptions());
       } catch (postError) {
         recordLlmCall({ kind: 'embedding', model: embeddingModel, ms: Date.now() - tEmb, ok: false });
         throw postError;
@@ -246,7 +253,7 @@ export class OpenRouterService {
       const t0 = Date.now();
       let response: any;
       try {
-        response = await this.axiosInstance.post('/chat/completions', body);
+        response = await this.axiosInstance.post('/chat/completions', body, ...requestOptions());
       } catch (postError) {
         recordLlmCall({ kind: 'chat', model: generationModel, ms: Date.now() - t0, ok: false });
         throw postError;
@@ -269,6 +276,7 @@ export class OpenRouterService {
 
       throw new Error('Resposta do OpenRouter não contém texto');
     } catch (error: any) {
+      if (isTurnAbort(error)) throw error; // item 2: cancelado por mensagem nova, não é falha
       logger.error(
         `Erro ao gerar resposta com modelo '${generationModel}': ${error.message}`,
       );

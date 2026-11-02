@@ -10,7 +10,23 @@ import { HumanAttendantService } from './humanAttendant.service';
 import { normalizePhoneNumber } from '../utils/phoneUtils';
 import { contatoiaRestricted, isOwnerNumber, phonesMatch } from '../utils/agentFlags';
 import { currentTurn, runMeasuredTurn, timeStage } from '../utils/turnMetrics';
+import { TurnControl, isTurnAbort, runWithTurnControl } from '../utils/turnControl';
 import logger from '../utils/logger';
+
+/** Metadados do turno vindos do agendador (item 2). Tudo opcional: sem eles, comportamento antigo. */
+export interface TurnMeta {
+  debounceMs?: number;
+  batchSize?: number;
+  /** epoch/cancelamento do agendador */
+  control?: TurnControl;
+  /** mensagens do lote atual (ids em `messages`), para não repetir no histórico (item 3) */
+  batchDbIds?: number[];
+  batchMessageIds?: string[];
+  retries?: number;
+}
+
+/** 'sent' = resposta enviada; 'superseded' = descartado por mensagem nova; 'done' = terminou sem enviar. */
+export type TurnOutcome = 'sent' | 'superseded' | 'done';
 
 export interface ConversationStatus {
   id: number;
@@ -135,8 +151,8 @@ export class ConversationService {
     conversationId: number,
     messageContent: string,
     whatsappService: WhatsAppService,
-    turnMeta: { debounceMs?: number; batchSize?: number } = {}
-  ): Promise<void> {
+    turnMeta: TurnMeta = {}
+  ): Promise<TurnOutcome> {
     // Item 1 (TURN_METRICS=on): mede o turno e grava uma linha em logs/turnos.jsonl.
     return runMeasuredTurn(
       {
@@ -145,9 +161,22 @@ export class ConversationService {
         mensagens_no_lote: turnMeta.batchSize ?? 1,
         chars_in: messageContent.length,
         ...(typeof turnMeta.debounceMs === 'number' ? { debounce_ms: turnMeta.debounceMs } : {}),
+        ...(turnMeta.control ? { agendador: true, refeito: turnMeta.retries ?? 0 } : {}),
       },
-      () => this.processIncomingMessageInner(userId, conversationId, messageContent, whatsappService)
+      () => runWithTurnControl(turnMeta.control, () =>
+        this.processIncomingMessageInner(userId, conversationId, messageContent, whatsappService, turnMeta)
+      )
     );
+  }
+
+  /** Item 2: o turno foi substituído por mensagem nova? (sem agendador, nunca) */
+  private superseded(turnMeta: TurnMeta, conversationId: number, where: string): boolean {
+    const control = turnMeta.control;
+    if (!control || control.isCurrent()) return false;
+    logger.info(`[turnos] Conversa ${conversationId}: turno descartado (${where}), mensagem nova chegou; será refeito com tudo junto`);
+    const ctx = currentTurn();
+    if (ctx) ctx.outcome = 'substituido';
+    return true;
   }
 
   /** Envio da resposta da IA, medido como etapa "envio" do turno. */
@@ -162,8 +191,9 @@ export class ConversationService {
     userId: number,
     conversationId: number,
     messageContent: string,
-    whatsappService: WhatsAppService
-  ): Promise<void> {
+    whatsappService: WhatsAppService,
+    turnMeta: TurnMeta = {}
+  ): Promise<TurnOutcome> {
     try {
       // Verificar se respostas automáticas estão ativas
       const isAutoResponding = await this.isAutoResponding(conversationId);
@@ -171,7 +201,7 @@ export class ConversationService {
         logger.info(`Respostas automáticas pausadas para conversa ${conversationId} - ignorando mensagem`);
         const ctx = currentTurn();
         if (ctx) ctx.outcome = 'pausado';
-        return;
+        return 'done';
       }
 
       logger.info(`Iniciando processamento de mensagem para conversa ${conversationId}`);
@@ -204,7 +234,7 @@ export class ConversationService {
           logger.info(`Mensagem só tinha #contatoia (recusado) na conversa ${conversationId} - sem resposta`);
           const ctx = currentTurn();
           if (ctx) ctx.outcome = 'contatoia_recusado';
-          return;
+          return 'done';
         }
       }
 
@@ -223,13 +253,21 @@ export class ConversationService {
             conversationId,
             messageContent, // Usar mensagem ORIGINAL (com #contatoia)
             true, // usar RAG
-            includeHistory // Passar flag para incluir ou não histórico
+            includeHistory, // Passar flag para incluir ou não histórico
+            { batchDbIds: turnMeta.batchDbIds, batchMessageIds: turnMeta.batchMessageIds }
           ),
           new Promise<string>((_, reject) =>
             setTimeout(() => reject(new Error('Timeout ao processar mensagem com RAG')), 60000) // 60 segundos
           )
         ]));
       } catch (ragError: any) {
+        // Item 2: cancelado por mensagem nova não é falha (sem intervenção; o agendador refaz).
+        if (turnMeta.control && (isTurnAbort(ragError) || !turnMeta.control.isCurrent())) {
+          this.superseded(turnMeta, conversationId, 'durante a geração');
+          const ctx = currentTurn();
+          if (ctx) ctx.outcome = 'substituido';
+          return 'superseded';
+        }
         // A IA não conseguiu gerar resposta (falha ou timeout do RAG). Antes, a conversa
         // já tinha sido marcada 'in_progress' no início desta função, então o card ficava
         // em "Em Atendimento" sem nenhuma resposta ter sido enviada ao cliente (falso positivo
@@ -245,10 +283,15 @@ export class ConversationService {
           needs_intervention: true,
         });
         await this.emitConversationCardIfFound(conversationId);
-        return;
+        return 'done';
       }
 
       logger.info(`Resposta gerada para conversa ${conversationId}: "${response.substring(0, 50)}..."`);
+
+      // Item 2: confere o epoch antes de qualquer ação/envio. Mensagem nova = descarta e refaz.
+      if (this.superseded(turnMeta, conversationId, 'antes do envio')) {
+        return 'superseded';
+      }
 
       // Processar comandos de alerta de atendente na resposta da IA
       const alertMessage = this.extractAlertCommand(response);
@@ -392,6 +435,7 @@ export class ConversationService {
       await this.emitConversationCardIfFound(conversationId);
 
       logger.info(`Resposta automática enviada para conversa ${conversationId}`);
+      return 'sent';
     } catch (error: any) {
       logger.error(`Erro ao processar mensagem recebida para conversa ${conversationId}: ${error.message}`);
       logger.error(`Stack trace: ${error.stack}`);
@@ -409,6 +453,7 @@ export class ConversationService {
 
       // Não lançar erro - apenas logar para evitar crash
       // O processamento continua mesmo se uma mensagem falhar
+      return 'done';
     }
   }
 

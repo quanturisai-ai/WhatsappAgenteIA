@@ -1,4 +1,5 @@
 // Roda com: node --test-force-exit -r ts-node/register/transpile-only tests/contatoia-gate.test.ts
+process.env.TURN_METRICS = 'off'; // não gravar no logs/turnos.jsonl de produção
 // #contatoia / CONTATO_PROATIVO: só o dono (CONTATOIA_OWNER_NUMBERS) ou atendente ativo.
 // Sem banco e sem rede: RAG, modelos e WhatsApp falsos.
 process.env.CONTATOIA_OWNER_NUMBERS = '5561911110000';

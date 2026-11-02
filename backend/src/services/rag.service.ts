@@ -11,6 +11,13 @@ import { FidelizacaoService } from './fidelizacao.service';
 import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
+import { isTurnAbort } from '../utils/turnControl';
+
+/** Lote atual do agendador (item 2), para o histórico não repetir essas mensagens (item 3). */
+export interface TurnBatchInfo {
+  batchDbIds?: number[];
+  batchMessageIds?: string[];
+}
 
 export class RAGService {
   private ollamaService: OpenRouterService;
@@ -1037,7 +1044,8 @@ export class RAGService {
     conversationId: number,
     userMessage: string,
     useRAG: boolean = true,
-    includeHistory: boolean = true
+    includeHistory: boolean = true,
+    _batch: TurnBatchInfo = {}
   ): Promise<string> {
     try {
       if (useRAG) {
@@ -1046,11 +1054,14 @@ export class RAGService {
         return await this.generateSimpleResponse(userId, conversationId, userMessage);
       }
     } catch (error: any) {
+      // Item 2: turno cancelado por mensagem nova -> sem fallback (seria uma 2ª chamada à toa).
+      if (isTurnAbort(error)) throw error;
       logger.error(`Erro ao processar mensagem: ${error.message}`);
       // Fallback para resposta simples
       try {
         return await this.generateSimpleResponse(userId, conversationId, userMessage);
       } catch (fallbackError: any) {
+        if (isTurnAbort(fallbackError)) throw fallbackError;
         logger.error(`Erro no fallback: ${fallbackError.message}`);
         return 'Desculpe, não consegui processar sua mensagem no momento. Por favor, tente novamente.';
       }

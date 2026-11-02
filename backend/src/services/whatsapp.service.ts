@@ -17,7 +17,9 @@ import { emitConversationUpdated, emitConversationNew } from '../utils/conversat
 import { ConversationService } from './conversation.service';
 import { MessageSource } from '../types';
 import { OutgoingEchoRegistry, OutgoingIntent, echoTokenStore } from './outgoingEchoRegistry';
-import { echoBindingAppliesTo, echoBindingMode } from '../utils/agentFlags';
+import { antiLoopEnabled, echoBindingAppliesTo, echoBindingMode, envInt, turnSchedulerAppliesTo } from '../utils/agentFlags';
+import { PendingItem, TurnResult, TurnScheduler, schedulerConfigFromEnv } from './turnScheduler';
+import { HumanAttendantService } from './humanAttendant.service';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
 import { setupPuppeteerCache, detectChrome } from '../utils/puppeteer.util';
@@ -77,6 +79,12 @@ export class WhatsAppService extends EventEmitter {
   private pendingMessages: Map<number, string[]> = new Map();
   // Item 1 (métricas): hora da 1ª mensagem do lote, para medir a espera do debounce.
   private pendingFirstAt: Map<number, number> = new Map();
+  // Item 2 (TURN_SCHEDULER): debounce 5/8/15 s + trava por conversa + epoch/cancelamento + anti-loop.
+  readonly turnScheduler = new TurnScheduler(
+    (conversationId, batch, control, info) => this.runScheduledTurn(conversationId, batch, control, info),
+    (conversationId, reason) => this.handleTurnLoop(conversationId, reason),
+    () => schedulerConfigFromEnv(envInt, antiLoopEnabled())
+  );
   // Contador de erros consecutivos no keep-alive
   private keepAliveErrorCount: number = 0;
   // 4 tentativas x 15 min = 1 hora antes de marcar como connection_failed
@@ -2498,6 +2506,16 @@ export class WhatsAppService extends EventEmitter {
 
       logger.info(`Mensagem recebida de ${contactName} (${contactNumber}): "${(messageBody || '').substring(0, 50)}..."`);
 
+      // Item 2 (TURN_SCHEDULER=on/test): agendador com trava, cancelamento e anti-loop.
+      if (turnSchedulerAppliesTo(contactNumber)) {
+        this.turnScheduler.enqueue(conversation.id, {
+          messageId: msg.id?._serialized,
+          dbId: savedMessage?.id ?? undefined,
+          content: messageBody || `[${messageType}]`,
+        });
+        return;
+      }
+
       // Debounce: agrupar mensagens curtas do cliente antes de processar com a IA (evita várias respostas fragmentadas)
       const debounceMs = this.getDebounceMs();
       const convId = conversation.id;
@@ -2547,6 +2565,56 @@ export class WhatsAppService extends EventEmitter {
       logger.error(`Erro ao processar mensagem recebida: ${error.message}`);
       // NÃO lançar erro -apenas logar para evitar crash
       // throw error;
+    }
+  }
+
+  /** Item 2: um turno do agendador (lote com IDs, controle de epoch/cancelamento). */
+  private async runScheduledTurn(
+    conversationId: number,
+    batch: PendingItem[],
+    control: import('../utils/turnControl').TurnControl,
+    info: { debounceMs: number; retries: number }
+  ): Promise<TurnResult> {
+    const consolidated = batch.map((b) => b.content).join('\n').trim();
+    if (!consolidated) return 'done';
+    if (batch.length > 1) {
+      logger.info(`Processando ${batch.length} mensagens agrupadas da conversa ${conversationId}: "${consolidated.substring(0, 80)}..."`);
+    }
+    return this.conversationService.processIncomingMessage(this.userId, conversationId, consolidated, this, {
+      debounceMs: info.debounceMs,
+      batchSize: batch.length,
+      control,
+      retries: info.retries,
+      batchDbIds: batch.map((b) => b.dbId).filter((v): v is number => typeof v === 'number'),
+      batchMessageIds: batch.map((b) => b.messageId).filter((v): v is string => !!v),
+    });
+  }
+
+  /**
+   * Item 2 (ANTILOOP=on): rajada de mensagens ou de respostas. Pausa a IA da conversa, marca
+   * intervenção e avisa os atendentes (aviso interno; nada é enviado ao cliente).
+   */
+  private async handleTurnLoop(conversationId: number, reason: string): Promise<void> {
+    try {
+      await this.conversationService.pauseAutoResponding(conversationId);
+    } catch (error: any) {
+      logger.error(`[turnos] Não foi possível pausar a IA da conversa ${conversationId}: ${error.message}`);
+    }
+    try {
+      await this.conversationModel.update(conversationId, { needs_intervention: true });
+    } catch (error: any) {
+      logger.error(`[turnos] Não foi possível marcar intervenção na conversa ${conversationId}: ${error.message}`);
+    }
+    try {
+      await new HumanAttendantService().sendAlert(
+        this.userId,
+        conversationId,
+        `IA pausada automaticamente nesta conversa (possível loop: ${reason}). Verifique e reative a IA se for o caso.`,
+        null,
+        this
+      );
+    } catch (error: any) {
+      logger.error(`[turnos] Não foi possível avisar o atendente sobre o anti-loop da conversa ${conversationId}: ${error.message}`);
     }
   }
 

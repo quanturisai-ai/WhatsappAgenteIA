@@ -7,7 +7,7 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { MediaModel } from '../models/media.model';
 import logger from '../utils/logger';
-import { isTestNumber } from '../utils/agentFlags';
+import { isTestNumber, turnSchedulerAppliesTo } from '../utils/agentFlags';
 import { emitConversationNew, emitConversationUpdated } from '../utils/conversationSocketEmitter';
 
 const conversationService = new ConversationService();
@@ -766,6 +766,28 @@ export const simulateIncomingForTest = async (
     const whatsappService = WhatsAppManager.getInstance().getServiceSync(userId);
     if (!whatsappService) {
       res.status(400).json({ error: 'WhatsApp não está conectado' });
+      return;
+    }
+    // Item 2: viaScheduler=true grava a mensagem como recebida (só conversa de teste) e a põe na
+    // fila do agendador, como uma mensagem real (debounce, trava, cancelamento, histórico).
+    if (req.body?.viaScheduler === true) {
+      if (!turnSchedulerAppliesTo(conversation.contact_number)) {
+        res.status(400).json({ error: 'TURN_SCHEDULER não está ligado para esta conversa' });
+        return;
+      }
+      const messageId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const saved = await messageModel.create({
+        conversation_id: conversationId,
+        message_id: messageId,
+        content,
+        message_type: 'text',
+        direction: 'incoming',
+        is_from_ai: false,
+        source: 'client',
+      } as any);
+      whatsappService.turnScheduler.enqueue(conversationId, { messageId, dbId: saved?.id, content });
+      logger.info(`[simulate-incoming] Mensagem de teste na fila do agendador (conversa ${conversationId}, msg ${saved?.id})`);
+      res.json({ ok: true, queued: true, messageDbId: saved?.id ?? null });
       return;
     }
     logger.info(`[simulate-incoming] Turno de teste na conversa ${conversationId}`);
