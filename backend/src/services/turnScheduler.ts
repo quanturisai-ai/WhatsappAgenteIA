@@ -123,6 +123,14 @@ export class TurnScheduler {
   ) {}
 
   private lastSweep = 0;
+  private lastArrival = 0;
+
+  /** Hora de chegada estritamente crescente (desempata mensagens no mesmo milissegundo). */
+  arrivalStamp(): number {
+    const t = this.now();
+    this.lastArrival = t > this.lastArrival ? t : this.lastArrival + 0.001;
+    return this.lastArrival;
+  }
 
   /** Remove o estado de conversas ociosas (sem fila, turno, reserva, janelas ou resfriamento). */
   private sweep(): void {
@@ -278,11 +286,28 @@ export class TurnScheduler {
       let result: TurnResult = 'done';
       let timedOut = false;
       try {
-        const r = await Promise.race([this.runTurn(conversationId, batch, control, { debounceMs: turnStartedAt - startedAt, retries }), stuck]);
+        const turn = this.runTurn(conversationId, batch, control, { debounceMs: turnStartedAt - startedAt, retries });
+        turn.catch(() => {}); // turno abandonado no prazo que falhe depois não vira rejeição solta
+        const r = await Promise.race([turn, stuck]);
         if (r === 'stuck') {
           timedOut = true;
-          logger.error(`[turnos] Conversa ${conversationId}: turno passou de ${cfg.turnDeadlineMs} ms; liberando a trava`);
-          if (!committed) ac.abort();
+          if (committed) {
+            // Já está enviando: não abre outro turno em paralelo. Avisa e espera ele terminar
+            // (o fetch do SyncZap tem limite próprio de ~5 min).
+            logger.error(`[turnos] Conversa ${conversationId}: turno enviando há mais de ${cfg.turnDeadlineMs} ms; aguardando terminar antes do próximo`);
+            Promise.resolve()
+              .then(() => this.onStuck(conversationId, this.now() - turnStartedAt))
+              .catch((e: any) => logger.error(`[turnos] Erro ao tratar turno travado da conversa ${conversationId}: ${e?.message || e}`));
+            timedOut = false;
+            result = await turn.catch(() => 'done' as TurnResult);
+          } else {
+            // Ainda não enviou nada: cancela (não consegue mais enviar) e refaz o lote.
+            logger.error(`[turnos] Conversa ${conversationId}: turno passou de ${cfg.turnDeadlineMs} ms sem enviar; cancelando e refazendo`);
+            ac.abort();
+            result = retries < 2 ? 'superseded' : 'done';
+            if (result === 'done') logger.error(`[turnos] Conversa ${conversationId}: lote descartado após ${retries + 1} tentativas travadas`);
+            timedOut = result === 'done'; // só marca intervenção se desistiu do lote
+          }
         } else {
           result = r;
         }
@@ -326,8 +351,12 @@ export class TurnScheduler {
     const list = kind === 'in' ? st.inTimes : st.outTimes;
     const windowMs = kind === 'in' ? cfg.inWindowMs : cfg.outWindowMs;
     const max = kind === 'in' ? cfg.maxIn : cfg.maxOut;
-    list.push(at);
-    while (list.length && list[0] <= at - windowMs) list.shift();
+    // Inserção ordenada (mensagem que demorou a entrar na fila pode ter `at` mais antigo).
+    let i = list.length;
+    while (i > 0 && list[i - 1] > at) i--;
+    list.splice(i, 0, at);
+    const ref = Math.max(at, this.now());
+    while (list.length && list[0] <= ref - windowMs) list.shift();
     // Já disparou: não avisa de novo durante o resfriamento. As mensagens seguem o fluxo normal
     // (com a IA pausada o turno termina como "pausado"; se o dono reativar, ela volta a responder).
     if (at < st.loopUntil) return false;

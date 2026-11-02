@@ -37,15 +37,17 @@ const linhas = (t: string) => t.split('\n').map((l) => l.trim()).filter(Boolean)
 
 /**
  * Sem IDs (debounce antigo/teste): retira o último bloco de mensagens do cliente se ele for
- * exatamente o final do texto atual (linha a linha). Pode pular até 3 envios da empresa no fim
- * (ex.: mídia obrigatória enviada antes da resposta), que ficam no histórico.
+ * exatamente o final do texto atual (linha a linha). Pode pular até 3 mídias da empresa no fim
+ * (ex.: mídia obrigatória enviada antes da resposta), que saem junto (cronologia).
  */
 function withoutTrailingBatch(rows: HistoryRow[], currentText: string): HistoryRow[] {
   const atual = linhas(currentText);
   if (atual.length === 0) return [...rows];
   let end = rows.length;
   let skipped = 0;
-  while (end > 0 && rows[end - 1].direction !== 'incoming' && skipped < 3) { end--; skipped++; }
+  // só pula mídia (ex.: obrigatória, enviada antes da resposta no fluxo antigo); texto da empresa
+  // no fim quer dizer que o bloco anterior já foi respondido.
+  while (end > 0 && rows[end - 1].direction !== 'incoming' && (rows[end - 1].message_type || 'text') !== 'text' && skipped < 3) { end--; skipped++; }
   let start = end;
   while (start > 0 && rows[start - 1].direction === 'incoming') start--;
   // maior k: as últimas k mensagens do cliente formam exatamente o fim do texto atual
@@ -53,7 +55,7 @@ function withoutTrailingBatch(rows: HistoryRow[], currentText: string): HistoryR
     const bloco = rows.slice(from, end).flatMap((r) => linhas(rowText(r)));
     if (bloco.length === 0 || bloco.length > atual.length) continue;
     const fim = atual.slice(atual.length - bloco.length);
-    if (bloco.every((l, i) => l === fim[i])) return [...rows.slice(0, from), ...rows.slice(end)];
+    if (bloco.every((l, i) => l === fim[i])) return rows.slice(0, from);
   }
   return [...rows];
 }
@@ -68,12 +70,9 @@ export function historyRowsBeforeBatch(rows: HistoryRow[], currentText: string, 
   let kept: HistoryRow[];
   if (dbIds.size > 0 || msgIds.size > 0) {
     const first = rows.findIndex(inBatch);
-    // Corta na 1ª mensagem do lote: as do cliente depois dela são o próprio lote ou mensagens que
-    // ainda estão na fila (vão no próximo turno). Envios da empresa depois dela (ex.: mídia
-    // obrigatória deste turno) continuam no histórico.
-    kept = first >= 0
-      ? [...rows.slice(0, first), ...rows.slice(first).filter((r) => r.direction !== 'incoming')]
-      : rows.filter((r) => !inBatch(r));
+    // Corta na 1ª mensagem do lote: o que veio depois é o próprio lote ou mensagens ainda na fila
+    // (vão no próximo turno). Cortar tudo mantém a cronologia (o lote vai por último).
+    kept = first >= 0 ? rows.slice(0, first) : rows.filter((r) => !inBatch(r));
   } else {
     kept = withoutTrailingBatch(rows, currentText);
   }

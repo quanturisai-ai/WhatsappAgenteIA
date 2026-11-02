@@ -228,33 +228,62 @@ test('juiz #2: depois do commit (enviando) mensagem nova não cancela; vira o pr
   assert.deepEqual(lotes, [['primeira?'], ['segunda?']]);
 });
 
-test('juiz #3: turno pendurado libera a trava no prazo, avisa e não atropela o turno seguinte', async () => {
+test('juiz #3 (2ª passada): turno enviando que passa do prazo avisa, mas não abre outro turno em paralelo', async () => {
   const travados: number[] = [];
-  let chamadas = 0;
+  let chamadas = 0, ativos = 0, maxAtivos = 0;
   let soltarPendurado: (v: TurnResult) => void = () => {};
   const lotes: string[][] = [];
   const run = async (_c: number, batch: PendingItem[], control: TurnControl): Promise<TurnResult> => {
-    chamadas++;
-    if (chamadas === 1) {
-      control.commit();
-      return new Promise<TurnResult>((r) => { soltarPendurado = r; }); // envio pendurado
-    }
-    await esperar(80);
-    lotes.push(batch.map((b) => b.content));
-    return control.commit() ? 'sent' : 'superseded';
+    chamadas++; ativos++; maxAtivos = Math.max(maxAtivos, ativos);
+    try {
+      if (chamadas === 1) {
+        control.commit();
+        return await new Promise<TurnResult>((r) => { soltarPendurado = r; }); // envio pendurado
+      }
+      await esperar(30);
+      lotes.push(batch.map((b) => b.content));
+      return control.commit() ? 'sent' : 'superseded';
+    } finally { ativos--; }
   };
   const s = new TurnScheduler(run, () => {}, () => cfg({ turnDeadlineMs: 150 }), Date.now, (c) => { travados.push(c); });
   s.enqueue(1, { content: 'primeira?' });
   await esperar(250);
   assert.deepEqual(travados, [1], 'avisou o turno travado');
-  assert.equal(s.snapshot(1).running, false, 'trava liberada');
   s.enqueue(1, { content: 'segunda?' });
-  await esperar(70); // 2º turno rodando
-  soltarPendurado('sent'); // o pendurado termina atrasado
-  await esperar(5);
-  assert.equal(s.snapshot(1).running, true, 'o turno atrasado não liberou a trava do turno novo');
+  await esperar(150);
+  assert.equal(chamadas, 1, 'não começou outro turno enquanto o anterior ainda envia');
+  soltarPendurado('sent');
   await s.idle(1);
+  assert.equal(maxAtivos, 1, 'nunca dois turnos ativos');
   assert.deepEqual(lotes, [['segunda?']]);
+});
+
+test('juiz #3 (2ª passada): turno que passa do prazo SEM enviar é cancelado e o lote é refeito (não some)', async () => {
+  let chamadas = 0;
+  const lotes: string[][] = [];
+  let primeiroPodeEnviar: boolean | null = null;
+  const run = async (_c: number, batch: PendingItem[], control: TurnControl): Promise<TurnResult> => {
+    chamadas++;
+    if (chamadas === 1) {
+      await esperar(300); // LLM pendurado
+      primeiroPodeEnviar = control.commit();
+      return 'superseded';
+    }
+    lotes.push(batch.map((b) => b.content));
+    return control.commit() ? 'sent' : 'superseded';
+  };
+  const s = new TurnScheduler(run, () => {}, () => cfg({ turnDeadlineMs: 100 }));
+  s.enqueue(1, { content: 'pergunta original?' });
+  await esperar(250);
+  assert.deepEqual(lotes, [['pergunta original?']], 'refeito com a mensagem original');
+  await esperar(150);
+  assert.equal(primeiroPodeEnviar, false, 'o turno abandonado não consegue mais enviar');
+});
+
+test('juiz #4 (2ª passada): chegadas no mesmo milissegundo mantêm a ordem', () => {
+  const s = new TurnScheduler(async () => 'done', () => {}, () => cfg(), () => 5000);
+  const a = s.arrivalStamp(), b = s.arrivalStamp(), c = s.arrivalStamp();
+  assert.ok(a < b && b < c);
 });
 
 test('juiz #4: teto continua contando da 1ª mensagem depois de refazer', async () => {
@@ -347,6 +376,23 @@ test('ConversationService: mensagem nova aborta a chamada ao LLM em andamento (s
   assert.ok(posts[0].signal, 'o sinal de cancelamento chegou ao axios');
   assert.deepEqual(enviados, []);
   assert.equal(updates.some((u) => u.needs_intervention), false);
+});
+
+test('juiz #3 (2ª passada): com agendador, mídia obrigatória só sai depois do commit (turno cancelado não manda nada)', async () => {
+  const { svc, whatsapp, enviados } = criarConversa();
+  const ordem: string[] = [];
+  svc.sendMandatoryMedias = async () => { ordem.push('midia'); };
+  whatsapp.sendMessage = async (_n: string, t: string) => { ordem.push('texto'); enviados.push(t); return {}; };
+  let atual = true;
+  const ac = new AbortController();
+  const control: TurnControl = { epoch: 1, signal: ac.signal, isCurrent: () => atual, commit: () => atual };
+  svc.ragService = { processMessageAndRespond: async () => { atual = false; return 'Resposta velha'; } };
+  assert.equal(await svc.processIncomingMessage(1, 7, 'pergunta?', whatsapp, { control }), 'superseded');
+  assert.deepEqual(ordem, [], 'cancelado: nem mídia nem texto');
+  atual = true;
+  svc.ragService = { processMessageAndRespond: async () => 'Resposta nova' };
+  assert.equal(await svc.processIncomingMessage(1, 7, 'pergunta?', whatsapp, { control }), 'sent');
+  assert.deepEqual(ordem, ['midia', 'texto'], 'mídia obrigatória continua antes do texto');
 });
 
 test('ConversationService sem agendador: comportamento antigo (envia e devolve "sent")', async () => {

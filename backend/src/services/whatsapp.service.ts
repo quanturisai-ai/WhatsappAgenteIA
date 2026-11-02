@@ -2277,7 +2277,7 @@ export class WhatsAppService extends EventEmitter {
 
   private async handleIncomingMessage(msg: Message): Promise<void> {
     // Item 2: hora de chegada (ordem da fila) e reserva da conversa no agendador.
-    const arrivedAt = Date.now();
+    const arrivedAt = this.turnScheduler.arrivalStamp();
     let releaseHold: (() => void) | null = null;
     try {
       // Ignorar mensagens de status

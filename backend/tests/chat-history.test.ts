@@ -97,10 +97,13 @@ test('juiz #5: sem IDs, mensagem anterior que é só parte do texto atual NÃO s
 test('juiz #5: sem IDs, mídia obrigatória enviada depois do lote não impede retirar o lote', () => {
   const rows = [r(1, 'incoming', 'Oi'), r(2, 'outgoing', 'Olá!'), r(3, 'incoming', 'Quanto custa'), r(4, 'incoming', 'a secagem?'), { id: 5, direction: 'outgoing', content: '', message_type: 'image' }];
   const kept = historyRowsBeforeBatch(rows, 'Quanto custa\na secagem?');
-  assert.deepEqual(kept.map((k) => k.id), [1, 2, 5]);
+  assert.deepEqual(kept.map((k) => k.id), [1, 2]);
+  // texto da empresa no fim: o bloco já foi respondido, não é o lote atual
+  const respondido = [r(1, 'incoming', 'Quanto custa'), r(2, 'outgoing', 'R$ 18')];
+  assert.deepEqual(historyRowsBeforeBatch(respondido, 'Quanto custa').map((k) => k.id), [1, 2]);
 });
 
-test('com IDs: envio da empresa depois do lote (mídia obrigatória) continua no histórico; fila não', () => {
+test('com IDs: tudo a partir do lote sai (cronologia: o lote vai por último)', () => {
   const rows = [r(1, 'incoming', 'a'), r(2, 'outgoing', 'b'), r(3, 'incoming', 'lote'), { id: 4, direction: 'outgoing', content: '', message_type: 'image' }, r(5, 'incoming', 'na fila')];
-  assert.deepEqual(historyRowsBeforeBatch(rows, 'lote', { batchDbIds: [3] }).map((k) => k.id), [1, 2, 4]);
+  assert.deepEqual(historyRowsBeforeBatch(rows, 'lote', { batchDbIds: [3] }).map((k) => k.id), [1, 2]);
 });

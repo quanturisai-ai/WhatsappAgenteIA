@@ -215,10 +215,13 @@ export class ConversationService {
         throw new Error('Conversa não encontrada');
       }
 
-      // Enviar mídias obrigatórias ANTES da resposta da IA
-      await timeStage('midias_obrigatorias', () =>
+      // Enviar mídias obrigatórias ANTES da resposta da IA.
+      // Item 2 (agendador): só depois da conferência do epoch (commit), para um turno cancelado por
+      // mensagem nova não mandar nada ao cliente; continuam saindo antes do texto da resposta.
+      const sendMandatory = () => timeStage('midias_obrigatorias', () =>
         this.sendMandatoryMedias(userId, conversationId, conversation.contact_number, whatsappService, conversation.lid)
       );
+      if (!turnMeta.control) await sendMandatory();
 
       // Detectar comando #contatoia (não remover da mensagem, apenas detectar)
       let hasContatoIA = messageContent.toLowerCase().includes('#contatoia');
@@ -295,6 +298,7 @@ export class ConversationService {
       if (this.superseded(turnMeta, conversationId, 'antes do envio')) {
         return 'superseded';
       }
+      if (turnMeta.control) await sendMandatory();
 
       // Processar comandos de alerta de atendente na resposta da IA
       const alertMessage = this.extractAlertCommand(response);
