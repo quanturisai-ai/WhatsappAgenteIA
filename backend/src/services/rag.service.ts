@@ -675,7 +675,7 @@ export class RAGService {
       };
       if (ctx) ctx.meta.tools = { modo: 'nativo' };
     }
-    const painelOut = pm ? { modelo: pm.modelos.geracao, reasoning: reasoningPara(pm.cap) } : undefined;
+    const painelOut = pm ? { modelo: pm.modelos.geracao, reasoning: reasoningPara(pm.cap.conhecido ? pm.cap : capacidadesDe(pm.modelos.geracao)) } : undefined;
     return { messages, systemHash: sys.hash, multimodal: mm, tools, painel: painelOut };
   }
 
