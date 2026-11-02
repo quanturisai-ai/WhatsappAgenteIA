@@ -268,8 +268,12 @@ export class OpenRouterService {
         `Erro ao gerar resposta com modelo '${generationModel}': ${error.message}`,
       );
       if (error.response) {
+        // Item 5: com mídia, o erro do provedor pode ecoar parte do corpo: sem base64 e curto.
+        const dados = extra?.temMidia
+          ? JSON.stringify(semBase64(error.response.data ?? null) ?? null).slice(0, 1500)
+          : JSON.stringify(error.response.data);
         logger.error(
-          `Status: ${error.response.status}, Dados: ${JSON.stringify(error.response.data)}`,
+          `Status: ${error.response.status}, Dados: ${dados}`,
         );
         if (error.response.status === 404) {
           throw new Error(

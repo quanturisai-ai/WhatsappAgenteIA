@@ -23,7 +23,9 @@ import { VmLavClienteModel } from '../src/models/vmLavCliente.model';
 import { renderForLog } from '../src/services/chatHistory';
 import {
   aplicarMidiasNoHistorico,
+  carregarMidiasDoLote,
   conteudoDoTurno,
+  limitesDoEnv,
   garantirAlertaVideo,
   linhaMidia,
   normalizarDescricao,
@@ -37,10 +39,12 @@ import { deveDescreverMidia, modelAcceptsMedia, multimodalAppliesTo, multimodalM
 
 const FONE_TESTE = '5561900000001';
 const FONE_CLIENTE = '5562988887777';
-const MB = 1024 * 1024;
+const MB = 1_000_000;
 const GEMINI = 'google/gemini-2.5-flash-lite';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'midia-turno-'));
+process.env.MIDIA_DIR_INCOMING = dir; // só arquivos daqui vão ao provedor
+const em = (nome: string) => path.join(dir, nome);
 const arquivo = (nome: string, bytes: number) => {
   const p = path.join(dir, nome);
   fs.writeFileSync(p, Buffer.alloc(bytes, 7));
@@ -67,11 +71,13 @@ test('planejarMidias: foto vira image_url e vídeo curto vira video_url (data UR
 });
 
 test('planejarMidias: vídeo acima do limite ou que estoura o corpo máximo não vai (vira vídeo grande)', () => {
-  const grande = planejarMidias([arq(5, '/x/grande.mp4', 'video', 15 * MB)], LIMITES, () => { throw new Error('não deveria ler'); });
+  let leituras = 0;
+  const grande = planejarMidias([arq(5, em('grande.mp4'), 'video', 15 * MB)], LIMITES, () => { leituras++; return Buffer.alloc(1); });
+  assert.equal(leituras, 0, 'não lê o arquivo grande');
   assert.equal(grande.partes.length, 0);
   assert.deepEqual(grande.videosGrandes.map((v) => v.mediaId), [5]);
   // 13 MB cabe no limite de vídeo, mas 2 deles estouram o corpo (base64 = 4/3)
-  const dois = planejarMidias([arq(6, '/a.mp4', 'video', 13 * MB), arq(7, '/b.mp4', 'video', 13 * MB)], LIMITES, lerFalso(13 * MB));
+  const dois = planejarMidias([arq(6, em('a.mp4'), 'video', 13 * MB), arq(7, em('b.mp4'), 'video', 13 * MB)], LIMITES, lerFalso(13 * MB));
   assert.equal(dois.partes.length, 1);
   assert.deepEqual(dois.videosGrandes.map((v) => v.mediaId), [7]);
   assert.ok(tamanhoDataUrl(13 * MB, 'video/mp4') > 13 * MB * 1.33);
@@ -79,15 +85,42 @@ test('planejarMidias: vídeo acima do limite ou que estoura o corpo máximo não
 
 test('planejarMidias: GIF/áudio/documento, limite por turno e erro de leitura não derrubam', () => {
   const plano = planejarMidias(
-    [arq(1, GIF, 'image', 500), arq(2, '/x.ogg', 'audio', 100), arq(3, '/x.pdf', 'document', 100), arq(4, '/sumiu.jpg', 'image', 100)],
+    [arq(1, GIF, 'image', 500), arq(2, em('x.ogg'), 'audio', 100), arq(3, em('x.pdf'), 'document', 100), arq(4, em('sumiu.jpg'), 'image', 100)],
     LIMITES,
     (p) => fs.readFileSync(p)
   );
   assert.equal(plano.partes.length, 0);
   assert.deepEqual(plano.fotosNaoVistas.map((f) => f.motivo), ['formato', 'leitura']);
-  const cinco = planejarMidias([1, 2, 3, 4, 5].map((i) => arq(i, `/f${i}.png`, 'image', 10)), { ...LIMITES, maxPorTurno: 4 }, lerFalso(10));
+  const cinco = planejarMidias([1, 2, 3, 4, 5].map((i) => arq(i, em(`f${i}.png`), 'image', 10)), { ...LIMITES, maxPorTurno: 4 }, lerFalso(10));
   assert.equal(cinco.partes.length, 4);
   assert.deepEqual(cinco.fotosNaoVistas.map((f) => f.motivo), ['limite_por_turno']);
+});
+
+test('limites do .env: vídeo de 14 MB (padrão) cabe no corpo; acima disso vira vídeo grande', () => {
+  for (const k of ['MIDIA_VIDEO_MAX_MB', 'MIDIA_MAX_REQUEST_BYTES', 'MIDIA_IMAGEM_MAX_MB', 'MIDIA_MAX_POR_TURNO']) delete process.env[k];
+  const lim = limitesDoEnv(60_000); // system de ~35 mil caracteres + histórico
+  const cabe = planejarMidias([arq(1, em('v14.mp4'), 'video', 14 * MB)], lim, lerFalso(14 * MB));
+  assert.equal(cabe.partes.length, 1, '14 MB tem que ir ao modelo');
+  const passa = planejarMidias([arq(2, em('v14b.mp4'), 'video', 14 * MB + 1)], lim, lerFalso(14 * MB + 1));
+  assert.deepEqual(passa.videosGrandes.map((v) => v.mediaId), [2]);
+});
+
+test('arquivo fora de uploads/incoming nunca é lido nem enviado', () => {
+  let leituras = 0;
+  const plano = planejarMidias([arq(1, '/etc/passwd.jpg', 'image', 100), arq(2, path.join(dir, '..', 'fora.jpg'), 'image', 100)], LIMITES, () => { leituras++; return Buffer.alloc(100); });
+  assert.equal(leituras, 0);
+  assert.equal(plano.partes.length, 0);
+  assert.deepEqual(plano.fotosNaoVistas.map((f) => f.motivo), ['leitura', 'leitura']);
+});
+
+test('vídeo que não abre (formato) chama o atendente sem dizer que é grande', () => {
+  const plano = planejarMidias([arq(3, em('clip.mov.bin'), 'video', 2000)], LIMITES, lerFalso(2000));
+  assert.deepEqual(plano.videosGrandes, []);
+  assert.deepEqual(plano.videosNaoVistos.map((v) => v.motivo), ['formato']);
+  assert.match(conteudoDoTurno('x', plano) as string, /\[vídeo recebido\] \(1 vídeo\(s\) que você não consegue abrir/);
+  const r = garantirAlertaVideo('ok', plano);
+  assert.match(r, /\[ALERTAR_ATENDENTE: Cliente enviou 1 vídeo\(s\) que a IA não conseguiu abrir/);
+  assert.ok(!/grande demais/.test(r));
 });
 
 test('conteudoDoTurno: texto primeiro (contexto + mensagem + aviso das mídias) e depois os anexos', () => {
@@ -117,6 +150,8 @@ test('vídeo grande: aviso no texto e alerta ao atendente acrescentado só se o 
 test('histórico: mídia antiga vira 1 linha com código de erro e máquina; sem descrição, rótulo curto', () => {
   const d = normalizarDescricao({ tipo: 'painel', descricao: 'Painel da secadora\ncom erro', texto_visivel: 'E21', codigo_erro: 'E21', numero_maquina: '03' })!;
   assert.equal(linhaMidia('image', d), '[foto do cliente: Painel da secadora com erro | código de erro: E21 | máquina: 03]');
+  assert.equal(linhaMidia('image', { ...d, texto_visivel: 'E21 SALDO INSUFICIENTE' }),
+    '[foto do cliente: Painel da secadora com erro | código de erro: E21 | máquina: 03 | texto: E21 SALDO INSUFICIENTE]');
   assert.equal(linhaMidia('video', null), '[vídeo recebido]');
   assert.equal(linhaMidia('image', undefined), '[foto recebida]');
   assert.equal(normalizarDescricao({ descricao: '' }), null);
@@ -217,7 +252,7 @@ test('OpenRouter: 429 com mídia tenta de novo 1 vez; sem mídia não muda (erro
 function bancoFalso(opts: { semTabelaDescricoes?: boolean } = {}) {
   const medias: Record<number, any> = {
     10: { id: 10, file_path: FOTO, file_type: 'image', file_size: 3000 },
-    11: { id: 11, file_path: '/nao/existe/grande.mp4', file_type: 'video', file_size: 28 * MB },
+    11: { id: 11, file_path: em('nao-existe-grande.mp4'), file_type: 'video', file_size: 28 * MB },
     12: { id: 12, file_path: FOTO, file_type: 'image', file_size: 3000 },
   };
   const msgMidia: Record<number, number> = { 1: 12, 3: 10, 4: 11 }; // messages.id -> media_id
@@ -225,8 +260,9 @@ function bancoFalso(opts: { semTabelaDescricoes?: boolean } = {}) {
   const sqls: string[] = [];
   (pool as any).getConnection = async () => ({
     release() {},
-    async query(sql: string, ids: number[]) {
+    async query(sql: string, params: number[]) {
       sqls.push(sql);
+      const ids = /conversation_id = \?/.test(sql) ? params.slice(0, -1) : params;
       if (/media_descricoes/.test(sql) && opts.semTabelaDescricoes) throw new Error("Table 'agente_zap.media_descricoes' doesn't exist");
       const linhas = ids.filter((id) => msgMidia[id] !== undefined).map((id) => {
         const md = medias[msgMidia[id]];
@@ -309,6 +345,7 @@ test('RAGService, vídeo grande: não lê o arquivo, avisa no texto e chama o at
   const linhas = [...HIST, { id: 4, message_id: 'w4', direction: 'incoming', content: 'olha', message_type: 'media', media_id: 11, created_at: new Date() }];
   const { svc, chamadas } = criar(FONE_CLIENTE, linhas);
   const r = await svc.generateResponse(1, 8, 'olha', undefined, true, { batchDbIds: [4], batchMessageIds: ['w4'] });
+  assert.ok(!/nao-existe/.test(JSON.stringify(chamadas[0].input)));
   const ultima = chamadas[0].input[chamadas[0].input.length - 1].content;
   assert.equal(typeof ultima, 'string');
   assert.match(ultima, /\[vídeo recebido\] \(28\.0 MB/);
@@ -331,5 +368,28 @@ test('RAGService, sem a tabela media_descricoes ou modelo só-texto: segue sem q
   assert.equal(b.chamadas[0].model, 'deepseek/deepseek-v4-flash');
   assert.equal(typeof b.chamadas[0].input[b.chamadas[0].input.length - 1].content, 'string');
   assert.equal(b.chamadas[0].extra.dataCollection, undefined);
+  assert.equal(b.chamadas[0].input[1].content, '[media]', 'sem deny, a descrição da mídia não vai no histórico');
+  process.env.AGENTE_MULTIMODAL = 'off';
+});
+
+test('carregarMidiasDoLote: ordem do lote (chegada), não a do id; só da conversa e recebidas', async () => {
+  const { sqls } = bancoFalso();
+  const a = await carregarMidiasDoLote(8, [4, 3]);
+  assert.deepEqual(a.map((x) => x.messageDbId), [4, 3]);
+  assert.match(sqls[sqls.length - 1], /m\.conversation_id = \? AND md\.source = 'incoming'/);
+  assert.deepEqual(await carregarMidiasDoLote(0, [3]), []);
+});
+
+test('RAGService: se a chamada com vídeo grande falhar, o fallback ainda chama o atendente', async () => {
+  process.env.AGENTE_MULTIMODAL = 'on';
+  process.env.OPENROUTER_GENERATION_MODEL = GEMINI;
+  bancoFalso();
+  const linhas = [...HIST, { id: 4, message_id: 'w4', direction: 'incoming', content: 'olha', message_type: 'media', media_id: 11, created_at: new Date() }];
+  const { svc } = criar(FONE_CLIENTE, linhas);
+  let n = 0;
+  svc.ollamaService.generateResponse = async () => { if (n++ === 0) throw new Error('Erro ao gerar resposta: 413'); return 'Um atendente vai ver.'; };
+  const r = await svc.processMessageAndRespond(1, 8, 'olha', true, true, { batchDbIds: [4], batchMessageIds: ['w4'] });
+  assert.equal(n, 2);
+  assert.match(r, /^Um atendente vai ver\.\n\[ALERTAR_ATENDENTE: Cliente enviou vídeo grande demais/);
   process.env.AGENTE_MULTIMODAL = 'off';
 });

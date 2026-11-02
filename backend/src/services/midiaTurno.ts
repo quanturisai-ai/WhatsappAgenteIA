@@ -65,7 +65,9 @@ export interface LimitesMidia {
   orcamentoBytes: number;
 }
 
-const MB = 1024 * 1024;
+// MB decimal (como o WhatsApp e o limite do Google, em bytes): 14 MB = 14.000.000 bytes -> data URL
+// de 18,67 MB, que cabe no corpo de 19.000.000 (o vídeo de 14,16 MB passou no teste de 02/11).
+const MB = 1_000_000;
 
 /**
  * Limites do .env. O Google AI Studio recusa corpo acima de 20.000.000 bytes (teste de 02/11: 413
@@ -84,8 +86,10 @@ export function limitesDoEnv(bytesTexto: number): LimitesMidia {
 export interface PlanoMidias {
   partes: ParteConteudo[];
   anexadas: Array<{ mediaId: number; tipo: 'foto' | 'video'; bytes: number }>;
-  /** vídeos que não vão ao modelo: viram "[vídeo recebido]" + atendente */
+  /** vídeos grandes demais (tamanho/corpo máximo): viram "[vídeo recebido]" + atendente */
   videosGrandes: Array<{ mediaId: number; bytes: number }>;
+  /** vídeos que o modelo não consegue ver por outro motivo (formato, leitura, limite por turno): + atendente */
+  videosNaoVistos: Array<{ mediaId: number; motivo: string }>;
   /** fotos que não vão (formato, tamanho, limite por turno, erro de leitura) */
   fotosNaoVistas: Array<{ mediaId: number; motivo: string }>;
 }
@@ -94,13 +98,14 @@ export interface PlanoMidias {
  * Decide o que vai ao modelo (função pura; `ler` é injetado para teste). Ordem do lote preservada.
  */
 export function planejarMidias(arquivos: MidiaArquivo[], limites: LimitesMidia, ler: (p: string) => Buffer): PlanoMidias {
-  const plano: PlanoMidias = { partes: [], anexadas: [], videosGrandes: [], fotosNaoVistas: [] };
+  const plano: PlanoMidias = { partes: [], anexadas: [], videosGrandes: [], videosNaoVistos: [], fotosNaoVistas: [] };
   let orcamento = limites.orcamentoBytes;
   for (const arq of arquivos) {
     if (arq.fileType !== 'image' && arq.fileType !== 'video') continue;
     const video = arq.fileType === 'video';
     const naoVai = (motivo: string) => {
-      if (video) plano.videosGrandes.push({ mediaId: arq.mediaId, bytes: arq.fileSize });
+      if (video && (motivo === 'tamanho' || motivo === 'corpo_maximo')) plano.videosGrandes.push({ mediaId: arq.mediaId, bytes: arq.fileSize });
+      else if (video) plano.videosNaoVistos.push({ mediaId: arq.mediaId, motivo });
       else plano.fotosNaoVistas.push({ mediaId: arq.mediaId, motivo });
     };
     const mime = mimeDaMidia(arq);
@@ -112,6 +117,7 @@ export function planejarMidias(arquivos: MidiaArquivo[], limites: LimitesMidia, 
     if (custo > orcamento) { naoVai('corpo_maximo'); continue; }
     let buf: Buffer;
     try {
+      if (!caminhoPermitido(arq.filePath)) throw new Error('fora de uploads/incoming');
       buf = ler(arq.filePath);
     } catch {
       naoVai('leitura');
@@ -139,6 +145,9 @@ export function blocoMidiasDoTurno(plano: PlanoMidias): string {
   for (const v of plano.videosGrandes) {
     linhas.push(`[vídeo recebido] (${(v.bytes / MB).toFixed(1)} MB, grande demais para você ver: diga ao cliente que um atendente vai analisar o vídeo)`);
   }
+  if (plano.videosNaoVistos.length) {
+    linhas.push(`[vídeo recebido] (${plano.videosNaoVistos.length} vídeo(s) que você não consegue abrir: diga ao cliente que um atendente vai ver o vídeo)`);
+  }
   if (plano.fotosNaoVistas.length) {
     linhas.push(`[foto recebida] (${plano.fotosNaoVistas.length} foto(s) que você não consegue ver: se precisar, peça ao cliente para descrever)`);
   }
@@ -147,9 +156,25 @@ export function blocoMidiasDoTurno(plano: PlanoMidias): string {
 
 /** Comando de alerta para vídeo grande (anexado à resposta se o modelo não chamou o atendente). */
 export function alertaVideoGrande(plano: PlanoMidias): string | null {
-  if (plano.videosGrandes.length === 0) return null;
-  const tam = plano.videosGrandes.map((v) => `${(v.bytes / MB).toFixed(1)} MB`).join(', ');
-  return `[ALERTAR_ATENDENTE: Cliente enviou vídeo grande demais para a IA analisar (${tam}). Resumo: veja o vídeo na conversa.]`;
+  const motivos: string[] = [];
+  if (plano.videosGrandes.length) {
+    motivos.push(`vídeo grande demais para a IA analisar (${plano.videosGrandes.map((v) => `${(v.bytes / MB).toFixed(1)} MB`).join(', ')})`);
+  }
+  if (plano.videosNaoVistos.length) motivos.push(`${plano.videosNaoVistos.length} vídeo(s) que a IA não conseguiu abrir`);
+  if (motivos.length === 0) return null;
+  return `[ALERTAR_ATENDENTE: Cliente enviou ${motivos.join(' e ')}. Resumo: veja o vídeo na conversa.]`;
+}
+
+/**
+ * Só arquivos recebidos de clientes (uploads/incoming) vão ao provedor. MIDIA_DIR_INCOMING troca a pasta
+ * (testes). No Windows a comparação ignora maiúsculas.
+ */
+export function caminhoPermitido(filePath: string): boolean {
+  if (!filePath) return false;
+  const base = path.resolve(process.env.MIDIA_DIR_INCOMING || path.join(process.cwd(), 'uploads', 'incoming'));
+  const alvo = path.resolve(filePath);
+  const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  return norm(alvo).startsWith(norm(base) + path.sep);
 }
 
 // ------------------------------------------------------------------ banco
@@ -161,19 +186,21 @@ function linhasDe(r: any): any[] {
 }
 
 /** Fotos/vídeos/documentos das mensagens do lote atual (só do cliente), na ordem das mensagens. */
-export async function carregarMidiasDoLote(batchDbIds: number[] | undefined): Promise<MidiaArquivo[]> {
+export async function carregarMidiasDoLote(conversationId: number, batchDbIds: number[] | undefined): Promise<MidiaArquivo[]> {
   const ids = (batchDbIds || []).filter((v) => Number.isInteger(v) && v > 0);
-  if (ids.length === 0) return [];
+  if (ids.length === 0 || !(conversationId > 0)) return [];
   const conn = await pool.getConnection();
   try {
     const r = await conn.query(
       `SELECT m.id AS message_db_id, md.id AS media_id, md.file_path, md.file_type, md.file_size
          FROM messages m JOIN medias md ON md.id = m.media_id
         WHERE m.id IN (${ids.map(() => '?').join(',')}) AND m.direction = 'incoming'
-        ORDER BY m.id`,
-      ids
+          AND m.conversation_id = ? AND md.source = 'incoming'`,
+      [...ids, conversationId]
     );
-    return linhasDe(r).map((x: any) => ({
+    // Ordem do lote (hora de chegada do agendador), não a do id: o download pode inverter os ids.
+    const ordem = new Map(ids.map((id, i) => [id, i] as [number, number]));
+    return linhasDe(r).sort((a: any, b: any) => (ordem.get(Number(a.message_db_id)) ?? 0) - (ordem.get(Number(b.message_db_id)) ?? 0)).map((x: any) => ({
       messageDbId: Number(x.message_db_id),
       mediaId: Number(x.media_id),
       filePath: String(x.file_path || ''),
@@ -256,7 +283,8 @@ export function linhaMidia(fileType: string, d?: DescricaoMidia | null): string 
   const partes = [umaLinha(d.descricao, 160)];
   if (umaLinha(d.codigo_erro, 40)) partes.push(`código de erro: ${umaLinha(d.codigo_erro, 40)}`);
   if (umaLinha(d.numero_maquina, 20)) partes.push(`máquina: ${umaLinha(d.numero_maquina, 20)}`);
-  if (umaLinha(d.texto_visivel, 80) && !umaLinha(d.codigo_erro, 40)) partes.push(`texto: ${umaLinha(d.texto_visivel, 80)}`);
+  const tv = umaLinha(d.texto_visivel, 80);
+  if (tv && tv.toLowerCase() !== umaLinha(d.codigo_erro, 40).toLowerCase()) partes.push(`texto: ${tv}`);
   return `[${rotulo} do cliente: ${partes.join(' | ')}]`;
 }
 
@@ -307,8 +335,11 @@ export async function descreverArquivo(arq: MidiaArquivo): Promise<{ descricao: 
   if (!mime) throw new Error('formato não suportado');
   const limites = limitesDoEnv(10_000);
   const max = arq.fileType === 'video' ? limites.videoMaxBytes : limites.imagemMaxBytes;
+  if (!caminhoPermitido(arq.filePath)) throw new Error('arquivo fora de uploads/incoming');
+  const tam = fs.statSync(arq.filePath).size;
+  if (tam > max || tamanhoDataUrl(tam, mime) > limites.orcamentoBytes) throw new Error('grande demais');
   const buf = fs.readFileSync(arq.filePath);
-  if (buf.length > max || tamanhoDataUrl(buf.length, mime) > limites.orcamentoBytes) throw new Error('grande demais');
+  if (buf.length > max) throw new Error('grande demais');
   const url = `data:${mime};base64,${buf.toString('base64')}`;
   const parte: ParteConteudo = arq.fileType === 'video' ? { type: 'video_url', video_url: { url } } : { type: 'image_url', image_url: { url } };
   const modelo = (process.env.MIDIA_DESCRICAO_MODELO || '').trim() || multimodalModel();
@@ -364,7 +395,7 @@ export async function descreverMidiaRecebida(messageDbId: number, mediaId: numbe
     const conn = await pool.getConnection();
     let arq: MidiaArquivo | null = null;
     try {
-      const r = linhasDe(await conn.query('SELECT id, file_path, file_type, file_size FROM medias WHERE id = ?', [mediaId]));
+      const r = linhasDe(await conn.query("SELECT id, file_path, file_type, file_size FROM medias WHERE id = ? AND source = 'incoming'", [mediaId]));
       if (r[0]) arq = { messageDbId, mediaId, filePath: String(r[0].file_path || ''), fileType: String(r[0].file_type || ''), fileSize: Number(r[0].file_size || 0) };
     } finally {
       conn.release();
@@ -427,6 +458,7 @@ export function metaMultimodal(plano: PlanoMidias, modelo: string): Record<strin
     videos: plano.anexadas.filter((a) => a.tipo === 'video').length,
     bytes: plano.anexadas.reduce((s, a) => s + a.bytes, 0),
     videos_grandes: plano.videosGrandes.length,
+    videos_nao_vistos: plano.videosNaoVistos.length,
     fotos_nao_vistas: plano.fotosNaoVistas.length,
   };
 }

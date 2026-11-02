@@ -13,7 +13,7 @@ import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
 import { agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, ragEnabledMode } from '../utils/agentFlags';
-import { PlanoMidias, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
+import { PlanoMidias, alertaVideoGrande, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
 import fs from 'fs';
 import { currentTurn } from '../utils/turnMetrics';
 import { buildContextoTurno, buildSystemFixo, dataHoraMinuto, loadAgenteYaml, mensagemFinal } from './agentePrompt';
@@ -576,7 +576,9 @@ export class RAGService {
     const contexto = buildContextoTurno({ agora: dataHoraMinuto(), nome, telefone, extras });
     // Item 5 (AGENTE_MULTIMODAL): só em conversa real do contato liberado (test = AGENTE_TEST_NUMBERS).
     const multimodal = conversationId > 0 && !!telefone && multimodalAppliesTo(telefone);
-    const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory, multimodal) : [];
+    // Descrições de mídia no histórico só com modelo multimodal (essa chamada leva data_collection=deny).
+    const veMidia = multimodal && modelAcceptsMedia(multimodalModel());
+    const history = includeHistory ? await this.getHistoryAsChat(conversationId, userMessage, batch, customHistory, veMidia) : [];
     const messages: Array<{ role: ChatMessage['role']; content: any }> = buildChatMessages(sys.text, history, userMessage);
     const last = messages[messages.length - 1];
     last.content = mensagemFinal(contexto, last.content);
@@ -585,9 +587,9 @@ export class RAGService {
     if (multimodal) {
       const modelo = multimodalModel();
       let plano: PlanoMidias | null = null;
-      if (modelAcceptsMedia(modelo)) {
+      if (veMidia) {
         try {
-          const arquivos = await carregarMidiasDoLote(batch.batchDbIds);
+          const arquivos = await carregarMidiasDoLote(conversationId, batch.batchDbIds);
           if (arquivos.length > 0) {
             const bytesTexto = Buffer.byteLength(JSON.stringify(messages), 'utf8');
             plano = planejarMidias(arquivos, limitesDoEnv(bytesTexto), (p) => fs.readFileSync(p));
@@ -1130,7 +1132,15 @@ export class RAGService {
         extra.dataCollection = multimodalDataCollection();
         extra.temMidia = !!mm.plano && mm.plano.partes.length > 0;
       }
-      let responseText = await this.ollamaService.generateResponse(llmInput, undefined, mm ? mm.modelo : generationModel, generationOptions, extra);
+      let responseText: string;
+      try {
+        responseText = await this.ollamaService.generateResponse(llmInput, undefined, mm ? mm.modelo : generationModel, generationOptions, extra);
+      } catch (error: any) {
+        // Item 5: se a chamada falhar, o fallback (processMessageAndRespond) ainda chama o atendente pelo vídeo.
+        const alerta = mm?.plano ? alertaVideoGrande(mm.plano) : null;
+        if (alerta && error && typeof error === 'object') (error as any).alertaMidia = alerta;
+        throw error;
+      }
       if (mm?.plano) responseText = garantirAlertaVideo(responseText, mm.plano);
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
@@ -1325,13 +1335,18 @@ export class RAGService {
       // Item 2: turno cancelado por mensagem nova -> sem fallback (seria uma 2ª chamada à toa).
       if (isTurnAbort(error)) throw error;
       logger.error(`Erro ao processar mensagem: ${error.message}`);
+      // Item 5: vídeo que a IA não viu chama o atendente mesmo no fallback.
+      const comAlerta = (r: string) => {
+        const alerta: string | undefined = error?.alertaMidia;
+        return alerta && !/\[ALERTAR_ATENDENTE:/i.test(r) ? `${r.trim()}\n${alerta}` : r;
+      };
       // Fallback para resposta simples
       try {
-        return await this.generateSimpleResponse(userId, conversationId, userMessage, batch);
+        return comAlerta(await this.generateSimpleResponse(userId, conversationId, userMessage, batch));
       } catch (fallbackError: any) {
         if (isTurnAbort(fallbackError)) throw fallbackError;
         logger.error(`Erro no fallback: ${fallbackError.message}`);
-        return 'Desculpe, não consegui processar sua mensagem no momento. Por favor, tente novamente.';
+        return comAlerta('Desculpe, não consegui processar sua mensagem no momento. Por favor, tente novamente.');
       }
     }
   }
