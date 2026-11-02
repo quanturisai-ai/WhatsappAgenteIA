@@ -266,3 +266,14 @@ test('juiz 4: linha já gravada na conversa errada é corrigida pelo registro', 
   assert.equal(banco.mensagens[0].source, 'ai');
   assert.equal(banco.mensagens[0].is_from_ai, true);
 });
+
+test('juiz r2: com whatsapp-web.js (cliente não SyncZap) o registro não é usado', async () => {
+  process.env.OUTGOING_ECHO_BINDING = 'on';
+  const { svc } = criarServico();
+  let registros = 0;
+  const original = svc.outgoingRegistry.register.bind(svc.outgoingRegistry);
+  svc.outgoingRegistry.register = (...a: any[]) => { registros++; return original(...a); };
+  svc.client = { sendMessage: async () => ({ id: { _serialized: 'wweb-1' }, body: 'x' }), getState: async () => 'CONNECTED', on: () => {} };
+  try { await svc.sendMessage(FONE, 'via wweb', true, false, LID, 'ai', { conversationId: 8 }); } catch { /* caminho do wweb pode exigir mais do cliente falso */ }
+  assert.equal(registros, 0);
+});

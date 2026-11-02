@@ -2684,7 +2684,7 @@ export class WhatsAppService extends EventEmitter {
             fix.conversation_id = intent.conversationId;
           }
           if (existingMessage.source !== intent.source) fix.source = intent.source;
-          if (intent.isFromAI && !existingMessage.is_from_ai) fix.is_from_ai = true;
+          if (!!intent.isFromAI !== !!Number(existingMessage.is_from_ai)) fix.is_from_ai = !!intent.isFromAI;
           if (Object.keys(fix).length > 0) {
             try {
               await this.messageModel.update(existingMessage.id, fix);
@@ -3171,7 +3171,9 @@ export class WhatsAppService extends EventEmitter {
 
       // Item 0: registrar conversa + source ANTES do envio (o eco pode chegar antes do retorno).
       let echoToken: string | null = null;
-      if (echoBindingAppliesTo(contactNumber)) {
+      // Só com SyncZap: o eco é emitido dentro do sendMessage, então a correlação por token é
+      // exata. No whatsapp-web.js o eco vem do Puppeteer, fora do contexto: fica o caminho antigo.
+      if (this.client instanceof SyncZapClient && echoBindingAppliesTo(contactNumber)) {
         echoToken = this.outgoingRegistry.register(chatId, content, false, {
           conversationId: opts.conversationId ?? null,
           source,
@@ -3320,7 +3322,7 @@ export class WhatsAppService extends EventEmitter {
       // Item 0: registrar conversa + source + media_id ANTES do envio (cobre mídia sem legenda,
       // que antes não era rastreada e virava source=human, pausando a IA).
       let echoToken: string | null = null;
-      if (echoBindingAppliesTo(contactNumber)) {
+      if (this.client instanceof SyncZapClient && echoBindingAppliesTo(contactNumber)) {
         echoToken = this.outgoingRegistry.register(chatId, caption || '', true, {
           conversationId: opts.conversationId ?? null,
           source,
