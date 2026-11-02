@@ -12,7 +12,8 @@ import logger from '../utils/logger';
 import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 import { isTurnAbort } from '../utils/turnControl';
-import { agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, ragEnabledMode } from '../utils/agentFlags';
+import { agenteToolsAppliesTo, agenteToolsMode, agenteYamlAppliesTo, envInt, historyMessagesAppliesTo, historyMessagesMode, modelAcceptsMedia, multimodalAppliesTo, multimodalDataCollection, multimodalModel, openrouterPayloadV2, ragEnabledMode, ragMidiaIdFix } from '../utils/agentFlags';
+import { AcaoAgente, definicoesTools, loopFerramentas, midiaNoCatalogo } from './agenteTools';
 import { PlanoMidias, alertaVideoGrande, aplicarMidiasNoHistorico, carregarMidiasDoLote, conteudoDoTurno, garantirAlertaVideo, infoMidiasHistorico, limitesDoEnv, metaMultimodal, planejarMidias } from './midiaTurno';
 import fs from 'fs';
 import { currentTurn } from '../utils/turnMetrics';
@@ -35,6 +36,11 @@ export interface TurnBatchInfo {
   batchMessageIds?: string[];
   /** Item 4: remetente é dono/atendente (inclui no system os tópicos reservados, ex.: #contatoia). */
   contatoiaAutorizado?: boolean;
+  /**
+   * Item 6 (saída): preenchido pelo RAGService quando o turno usou as ferramentas nativas (AGENTE_TOOLS).
+   * Quem chama (ConversationService) executa as ações depois do commit do turno.
+   */
+  ferramentas?: { acoes: AcaoAgente[]; chamadas: number; estourou: boolean };
 }
 
 /** Item 4/5: mensagens do turno do agente.yaml (a última pode ser multimodal: [texto, foto/vídeo...]). */
@@ -42,6 +48,8 @@ type AgenteYamlTurno = {
   messages: Array<{ role: ChatMessage['role']; content: any }>;
   systemHash: string;
   multimodal?: { modelo: string; plano: PlanoMidias | null };
+  /** Item 6: tools nativas deste turno (catálogo de mídias = o mesmo do system). */
+  tools?: { defs: any[]; midiasCatalogo: Set<number>; contatoProativo: boolean };
 };
 
 export class RAGService {
@@ -271,7 +279,8 @@ export class RAGService {
    */
   private async rankMedias(
     mediasWithKeywords: any[],
-    vectorResults: Array<{ id: string; text: string; distance: number; metadata?: Record<string, any> }>
+    vectorResults: Array<{ id: string; text: string; distance: number; metadata?: Record<string, any> }>,
+    userId?: number
   ): Promise<Array<{ id: string; text: string; score: number; metadata?: Record<string, any> }>> {
     const scoredResults: Array<{ id: string; text: string; score: number; metadata?: Record<string, any> }> = [];
 
@@ -312,7 +321,11 @@ export class RAGService {
 
       // Extrair tipo e ID do metadata
       const type = result.metadata?.type || 'unknown';
-      const mediaId = result.metadata?.media_id;
+      // Item 6 (RAG_MIDIA_ID_FIX=on): a indexação grava `id` (só 6 de 18 mídias têm `media_id`).
+      const fixId = ragMidiaIdFix();
+      const mediaId = fixId
+        ? (result.metadata?.media_id ?? result.metadata?.id ?? (/^media_(\d+)$/.exec(result.id || '')?.[1]))
+        : result.metadata?.media_id;
 
       // Só processar se for mídia
       if (type !== 'media' || !mediaId) {
@@ -322,8 +335,9 @@ export class RAGService {
       // Buscar dados completos do banco para formatar
       let text = result.text;
 
+      let media: any = null;
       try {
-        const media = await this.mediaModel.findById(mediaId);
+        media = await this.mediaModel.findById(Number(mediaId));
         if (media) {
           // Formatar mídia no formato solicitado
           text = this.formatMediaForPrompt(media);
@@ -331,6 +345,9 @@ export class RAGService {
       } catch (error) {
         // Ignorar erro e usar texto original
       }
+      // Com a correção, mídia fora do catálogo (inativa, de cliente, de outro usuário, ou que não deu
+      // para conferir) não entra no prompt.
+      if (fixId && (userId === undefined || !midiaNoCatalogo(media, userId))) continue;
 
       const score = this.calculateScore(
         false, // Não tem palavra-chave correspondente
@@ -342,7 +359,7 @@ export class RAGService {
         id: result.id,
         text,
         score,
-        metadata: result.metadata,
+        metadata: fixId ? { ...result.metadata, media_id: Number(mediaId) } : result.metadata,
       });
     }
 
@@ -390,7 +407,7 @@ export class RAGService {
 
       // 4. Re-ranking separado para tópicos e mídias
       const rankedTopics = await this.rankTopics(topicsWithKeywords, vectorResults);
-      const rankedMedias = await this.rankMedias(mediasWithKeywords, vectorResults);
+      const rankedMedias = await this.rankMedias(mediasWithKeywords, vectorResults, userId);
 
       logger.debug(`[RAG] Após re-ranking: ${rankedTopics.length} tópicos, ${rankedMedias.length} mídias`);
 
@@ -551,7 +568,9 @@ export class RAGService {
     ]);
     // Só autorização explícita de quem chama (ConversationService); sem ela, nunca inclui.
     const incluirReservados = batch.contatoiaAutorizado === true;
-    const sys = buildSystemFixo(cfg, painel as any, topicos as any, midias as any, { incluirReservados });
+    // Item 6 (AGENTE_TOOLS): tools nativas só com payload v2 e com a seção ferramentas_nativas no yaml.
+    const usarTools = !!cfg.ferramentas_nativas && openrouterPayloadV2(true) && await this.useAgenteTools(conversationId);
+    const sys = buildSystemFixo(cfg, painel as any, topicos as any, midias as any, { incluirReservados, ferramentasNativas: usarTools });
     // Base grande demais para o contexto do modelo: volta ao prompt antigo (RAG) neste turno.
     const maxChars = envInt('AGENTE_SYSTEM_MAX_CHARS', 120000, 1000);
     if (sys.text.length > maxChars) {
@@ -614,7 +633,30 @@ export class RAGService {
       if (mm) ctx.meta.multimodal = mm.plano ? metaMultimodal(mm.plano, mm.modelo) : { modelo: mm.modelo };
     }
     logger.info(`[agente.yaml] conversa ${conversationId}: system ${sys.hash} (${sys.text.length} chars, ${sys.topicos.length} tópicos, ${sys.midias.length} mídias${sys.reservadosIncluidos.length ? `, reservados ${sys.reservadosIncluidos.join(',')}` : ''}), histórico ${history.length}`);
-    return { messages, systemHash: sys.hash, multimodal: mm };
+    let tools: AgenteYamlTurno['tools'];
+    if (usarTools) {
+      tools = {
+        defs: definicoesTools(cfg.ferramentas_nativas?.lista, { contatoProativo: incluirReservados }),
+        midiasCatalogo: new Set(sys.midias),
+        contatoProativo: incluirReservados,
+      };
+      if (ctx) ctx.meta.tools = { modo: 'nativo' };
+    }
+    return { messages, systemHash: sys.hash, multimodal: mm, tools };
+  }
+
+  /** Item 6: esta conversa usa as ferramentas nativas? Chat de teste do painel (conversa 0) só no modo on. */
+  private async useAgenteTools(conversationId: number): Promise<boolean> {
+    const mode = agenteToolsMode();
+    if (mode === 'off') return false;
+    if (conversationId <= 0) return mode === 'on';
+    if (mode === 'on') return true;
+    try {
+      const conversation = await this.conversationModel.findById(conversationId);
+      return agenteToolsAppliesTo(conversation?.contact_number);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1134,14 +1176,39 @@ export class RAGService {
       }
       let responseText: string;
       try {
-        responseText = await this.ollamaService.generateResponse(llmInput, undefined, mm ? mm.modelo : generationModel, generationOptions, extra);
+        const modeloTurno = mm ? mm.modelo : generationModel;
+        if (yaml?.tools) {
+          // Item 6: loop com tools nativas, teto AGENTE_TOOLS_MAX_CHAMADAS (3); ações executadas depois por quem chama.
+          const t = yaml.tools;
+          const r = await loopFerramentas(
+            (msgs) => this.ollamaService.generateWithTools(msgs, modeloTurno, generationOptions, extra, t.defs),
+            llmInput as any[],
+            { midiasCatalogo: t.midiasCatalogo, contatoProativo: t.contatoProativo },
+            envInt('AGENTE_TOOLS_MAX_CHAMADAS', 3, 1)
+          );
+          responseText = r.texto;
+          batch.ferramentas = { acoes: r.acoes, chamadas: r.chamadas, estourou: r.estourou };
+          const ctxT = currentTurn();
+          if (ctxT) ctxT.meta.tools = { modo: 'nativo', chamadas: r.chamadas, pedidas: r.pedidas, acoes: r.acoes.map((a) => a.tipo), estourou: r.estourou };
+          if (r.estourou) logger.warn(`[tools] conversa ${conversationId}: limite de ${r.chamadas} chamadas sem resposta; atendente será chamado`);
+          else if (r.pedidas.length) logger.info(`[tools] conversa ${conversationId}: ${r.chamadas} chamada(s), ferramentas ${r.pedidas.join(', ')}, ações ${r.acoes.map((a) => a.tipo).join(', ') || '-'}`);
+        } else {
+          responseText = await this.ollamaService.generateResponse(llmInput, undefined, modeloTurno, generationOptions, extra);
+        }
       } catch (error: any) {
         // Item 5: se a chamada falhar, o fallback (processMessageAndRespond) ainda chama o atendente pelo vídeo.
         const alerta = mm?.plano ? alertaVideoGrande(mm.plano) : null;
         if (alerta && error && typeof error === 'object') (error as any).alertaMidia = alerta;
         throw error;
       }
-      if (mm?.plano) responseText = garantirAlertaVideo(responseText, mm.plano);
+      if (mm?.plano && batch.ferramentas) {
+        // Item 6: com tools nativas, o alerta do vídeo vira ação (a não ser que a IA já tenha chamado o atendente).
+        const alerta = alertaVideoGrande(mm.plano);
+        if (alerta && !batch.ferramentas.acoes.some((a) => a.tipo === 'chamar_atendente')) {
+          const m = alerta.match(/^\[ALERTAR_ATENDENTE:\s*([\s\S]*?)\s*Resumo:\s*([\s\S]*?)\]$/);
+          batch.ferramentas.acoes.push({ tipo: 'chamar_atendente', motivo: (m ? m[1] : alerta).replace(/\.$/, ''), resumo: m ? m[2] : '', automatico: true });
+        }
+      } else if (mm?.plano) responseText = garantirAlertaVideo(responseText, mm.plano);
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
       if (conversationId === 0) {

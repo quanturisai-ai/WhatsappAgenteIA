@@ -25,6 +25,8 @@ export interface AgenteYaml {
   persona: { papel: string; empresa_do_painel?: boolean; empresa?: string };
   regras: AgenteRegra[];
   ferramentas: AgenteFerramenta[];
+  /** Item 6 (AGENTE_TOOLS): descrição das ferramentas nativas + instrução que substitui a seção de comandos. */
+  ferramentas_nativas?: { instrucao: string; lista: Array<{ nome: string; descricao: string }> };
   handoff: { quando: string[]; pausar_ia: boolean };
   conhecimento: {
     fonte: string;
@@ -76,6 +78,13 @@ export function parseAgenteYaml(text: string): AgenteYaml {
   if (new Set(ids).size !== ids.length) erro('ids de regra repetidos');
   if (doc.regras.length === 0) erro('regras vazias');
   if (!Array.isArray(doc.ferramentas) || doc.ferramentas.some((f: any) => !f || !str(f.nome) || !str(f.comando) || !str(f.descricao))) erro('ferramentas');
+  const fn = doc.ferramentas_nativas;
+  if (fn !== undefined) {
+    const nomes = ['enviar_midia', 'chamar_atendente', 'contato_proativo'];
+    if (!fn || !str(fn.instrucao) || !Array.isArray(fn.lista) || fn.lista.length === 0) erro('ferramentas_nativas');
+    if (fn.lista.some((f: any) => !f || !nomes.includes(f.nome) || !str(f.descricao))) erro('ferramentas_nativas.lista');
+    if (new Set(fn.lista.map((f: any) => f.nome)).size !== fn.lista.length) erro('ferramentas_nativas repetidas');
+  }
   if (!doc.handoff || !Array.isArray(doc.handoff.quando) || doc.handoff.quando.length === 0 || doc.handoff.quando.some((q: any) => !str(q))) erro('handoff');
   if (typeof doc.handoff.pausar_ia !== 'boolean') erro('handoff.pausar_ia');
   const c = doc.conhecimento;
@@ -126,6 +135,11 @@ export function topicoReservado(t: TopicoDados, gatilhos: string[]): boolean {
 export interface SystemOpts {
   /** Dono/atendente: inclui os tópicos reservados (#contatoia). */
   incluirReservados?: boolean;
+  /**
+   * Item 6 (AGENTE_TOOLS): ferramentas nativas no lugar dos comandos em colchetes. Só tem efeito se o
+   * yaml tiver ferramentas_nativas; sem isso o texto é o mesmo de antes (byte a byte).
+   */
+  ferramentasNativas?: boolean;
 }
 
 export interface SystemFixo {
@@ -161,10 +175,21 @@ export function buildSystemFixo(
 
   partes.push(['# REGRAS', ...cfg.regras.map((r) => `${r.id}. ${limpa(r.texto)}`)].join('\n'));
 
-  partes.push([
-    '# COMANDOS (ferramentas)',
-    ...cfg.ferramentas.map((f) => `- ${f.nome}: ${limpa(f.comando)}\n  ${limpa(f.descricao)}`),
-  ].join('\n'));
+  const nativas = opts.ferramentasNativas === true && !!cfg.ferramentas_nativas;
+  if (nativas) {
+    // Sem contato_proativo aqui: as instruções dele só vêm no tópico reservado (dono/atendente).
+    const fn = cfg.ferramentas_nativas!;
+    partes.push([
+      '# FERRAMENTAS',
+      limpa(fn.instrucao),
+      ...fn.lista.filter((f) => f.nome !== 'contato_proativo').map((f) => `- ${f.nome}: ${limpa(f.descricao)}`),
+    ].join('\n'));
+  } else {
+    partes.push([
+      '# COMANDOS (ferramentas)',
+      ...cfg.ferramentas.map((f) => `- ${f.nome}: ${limpa(f.comando)}\n  ${limpa(f.descricao)}`),
+    ].join('\n'));
+  }
 
   partes.push([
     '# QUANDO CHAMAR UM ATENDENTE',
@@ -212,7 +237,7 @@ export function buildSystemFixo(
       midiasUsadas.push(m.id);
     }
     if (linhas.length) {
-      partes.push(['# MÍDIAS DISPONÍVEIS (envie com [ENVIAR_MIDIA:ID])', ...linhas].join('\n'));
+      partes.push([nativas ? '# MÍDIAS DISPONÍVEIS (envie com a ferramenta enviar_midia, pelo ID)' : '# MÍDIAS DISPONÍVEIS (envie com [ENVIAR_MIDIA:ID])', ...linhas].join('\n'));
     }
   }
 

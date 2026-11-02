@@ -43,12 +43,28 @@ ferramentas:       # comandos no texto da resposta (as tools nativas vêm num it
   # contato_proativo (#contatoia) não fica aqui: as instruções só entram no prompt do dono/atendente
   # (ver conhecimento.excluir_gatilhos).
 
+# Item 6 (AGENTE_TOOLS=on/test): ferramentas nativas (function calling). Com elas ligadas, esta seção
+# substitui a de comandos acima no system, e cada descrição vai também no array `tools` da chamada.
+# Os parâmetros (JSON Schema) ficam no código (src/services/agenteTools.ts). contato_proativo só é
+# oferecida ao dono/atendente autorizado. Sem AGENTE_TOOLS, esta seção é ignorada.
+ferramentas_nativas:
+  instrucao: "Para agir, use as ferramentas (chamadas de função); nunca escreva comandos entre colchetes. Se a personalidade, um tópico ou outra instrução mandar usar [ENVIAR_MIDIA:ID], [ALERTAR_ATENDENTE: ...] ou [CONTATO_PROATIVO: ...], use a ferramenta equivalente (enviar_midia, chamar_atendente ou contato_proativo). Sempre escreva também a resposta ao cliente em texto."
+  lista:
+    - nome: enviar_midia
+      descricao: "Envia ao cliente uma mídia do catálogo (seção MÍDIAS DISPONÍVEIS) pelo ID numérico. Pode chamar mais de uma vez na mesma resposta. Use só IDs que estão no catálogo. A sua resposta em texto vai como legenda da mídia."
+    - nome: chamar_atendente
+      descricao: "Avisa a equipe humana que esta conversa precisa de um atendente, quando a personalidade ou um tópico mandar acionar um atendente. Informe o motivo e um resumo da conversa. Depois, avise o cliente que um atendente vai continuar."
+    - nome: contato_proativo
+      descricao: "Envia uma mensagem do número da empresa para outro telefone. Só quando o dono ou atendente pedir com #contatoia, seguindo as instruções do tópico correspondente."
+
 handoff:
   quando:
     - "a resposta não está no painel nem na base de conhecimento"
     - "o cliente pede atendimento humano, conforme o tópico de atendimento humano"
     - "um tópico manda acionar o atendente (reclamação, reembolso, planos, voucher, cadastro, prêmio)"
-  pausar_ia: false  # comportamento atual: o alerta não pausa a IA (muda no item das tools nativas)
+  # Item 6: true = chamar o atendente pausa a IA da conversa, mas só se CHAMAR_ATENDENTE_PAUSA valer para o
+  # contato (off/test/on no .env) e o painel não tiver pause_on_human_reply desligado. Não muda o system.
+  pausar_ia: true
 
 conhecimento:
   fonte: banco
