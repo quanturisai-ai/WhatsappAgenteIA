@@ -7,6 +7,7 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { MediaModel } from '../models/media.model';
 import logger from '../utils/logger';
+import { isTestNumber } from '../utils/agentFlags';
 import { emitConversationNew, emitConversationUpdated } from '../utils/conversationSocketEmitter';
 
 const conversationService = new ConversationService();
@@ -728,3 +729,50 @@ export const createConversation = async (
   }
 };
 
+
+/**
+ * Teste de ponta a ponta do turno da IA (02/11/2026): roda processIncomingMessage como se a
+ * conversa tivesse recebido `content`, sem gravar mensagem recebida. Só com
+ * AGENTE_TEST_ENDPOINT=on e só para conversas de AGENTE_TEST_NUMBERS (número do dono/teste).
+ * Desligado (padrão) = 404, como se a rota não existisse.
+ */
+export const simulateIncomingForTest = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if ((process.env.AGENTE_TEST_ENDPOINT || 'off').trim().toLowerCase() !== 'on') {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const userId = req.userId!;
+    const conversationId = parseInt(req.params.id, 10);
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+    if (!conversationId || !content) {
+      res.status(400).json({ error: 'conversationId e content são obrigatórios' });
+      return;
+    }
+    const conversation = await conversationModel.findById(conversationId);
+    if (!conversation || conversation.user_id !== userId) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    if (!isTestNumber(conversation.contact_number)) {
+      logger.warn(`[simulate-incoming] Recusado: conversa ${conversationId} não é de número de teste`);
+      res.status(403).json({ error: 'Só para conversas de AGENTE_TEST_NUMBERS' });
+      return;
+    }
+    const whatsappService = WhatsAppManager.getInstance().getServiceSync(userId);
+    if (!whatsappService) {
+      res.status(400).json({ error: 'WhatsApp não está conectado' });
+      return;
+    }
+    logger.info(`[simulate-incoming] Turno de teste na conversa ${conversationId}`);
+    const t0 = Date.now();
+    await conversationService.processIncomingMessage(userId, conversationId, content, whatsappService);
+    res.json({ ok: true, ms: Date.now() - t0 });
+  } catch (error) {
+    next(error);
+  }
+};

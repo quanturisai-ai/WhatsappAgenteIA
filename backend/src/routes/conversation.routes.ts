@@ -12,6 +12,7 @@ import {
   sendMessage,
   sendMedia,
   createConversation,
+  simulateIncomingForTest,
 } from '../controllers/conversation.controller';
 import { authenticateToken } from '../middleware/auth';
 
@@ -32,6 +33,8 @@ router.post('/pause-all', pauseAllConversations);
 router.post('/resume-all', resumeAllConversations);
 router.post('/send', sendMessage);
 router.post('/send-media', sendMedia);
+// Teste de ponta a ponta (AGENTE_TEST_ENDPOINT=on, só números de teste)
+router.post('/:id/simulate-incoming', simulateIncomingForTest);
 
 export default router;
 
