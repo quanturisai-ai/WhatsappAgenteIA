@@ -393,3 +393,20 @@ test('RAGService: se a chamada com vídeo grande falhar, o fallback ainda chama 
   assert.match(r, /^Um atendente vai ver\.\n\[ALERTAR_ATENDENTE: Cliente enviou vídeo grande demais/);
   process.env.AGENTE_MULTIMODAL = 'off';
 });
+
+test('descrição: 429 passageiro é repetido com espera (3 tentativas); erro 400 não repete', async () => {
+  const m: any = await import('../src/services/midiaTurno');
+  assert.equal(typeof m.comRetentativa, 'function', 'comRetentativa ausente (código antigo: 1 retentativa de 2 s)');
+  assert.deepEqual(m.ESPERAS_DESCRICAO_MS, [3000, 10000]);
+  const dormidas: number[] = [];
+  const dormir = async (ms: number) => { dormidas.push(ms); };
+  let n = 0;
+  const r = await m.comRetentativa(async () => { n++; if (n < 3) throw { response: { status: 429 } }; return 'ok'; }, [3000, 10000], dormir);
+  assert.equal(r, 'ok'); assert.equal(n, 3); assert.deepEqual(dormidas, [3000, 10000]);
+  n = 0; dormidas.length = 0;
+  await assert.rejects(m.comRetentativa(async () => { n++; throw { response: { status: 429 } }; }, [3000, 10000], dormir));
+  assert.equal(n, 3);
+  n = 0;
+  await assert.rejects(m.comRetentativa(async () => { n++; throw { response: { status: 400 } }; }, [3000, 10000], dormir));
+  assert.equal(n, 1);
+});

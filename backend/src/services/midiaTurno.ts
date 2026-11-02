@@ -390,6 +390,23 @@ export async function gravarDescricao(messageDbId: number, mediaId: number | nul
  * Na chegada (durante o debounce): descreve e grava. Nunca lança; uma nova tentativa em 429/5xx.
  * Sem texto do cliente nem telefone no log.
  */
+/** Esperas entre tentativas da descrição (429 do Google é passageiro; a descrição não tem pressa). */
+export const ESPERAS_DESCRICAO_MS = [3000, 10000];
+
+/** Repete fn em 429/5xx/sem resposta, esperando esperas[i] antes da tentativa i+2. Outros erros sobem na hora. */
+export async function comRetentativa<T>(fn: () => Promise<T>, esperas: number[], dormir: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const st = err?.response?.status;
+      const passageiro = st === 429 || st >= 500 || (!st && err?.code === 'ECONNRESET');
+      if (!passageiro || i >= esperas.length) throw err;
+      await dormir(esperas[i]);
+    }
+  }
+}
+
 export async function descreverMidiaRecebida(messageDbId: number, mediaId: number): Promise<DescricaoMidia | null> {
   try {
     const conn = await pool.getConnection();
@@ -401,15 +418,8 @@ export async function descreverMidiaRecebida(messageDbId: number, mediaId: numbe
       conn.release();
     }
     if (!arq || !mimeDaMidia(arq)) return null;
-    let out;
-    try {
-      out = await descreverArquivo(arq);
-    } catch (err: any) {
-      const st = err?.response?.status;
-      if (st !== 429 && !(st >= 500)) throw err;
-      await new Promise((r) => setTimeout(r, 2000));
-      out = await descreverArquivo(arq);
-    }
+    const alvo = arq;
+    const out = await comRetentativa(() => descreverArquivo(alvo), ESPERAS_DESCRICAO_MS);
     await gravarDescricao(messageDbId, mediaId, out.descricao, out.modelo);
     logger.info(`[midia] descrição gravada: mensagem ${messageDbId}, mídia ${mediaId}, tipo ${out.descricao.tipo}, ${out.ms} ms, US$ ${out.custo ?? '?'}`);
     return out.descricao;
