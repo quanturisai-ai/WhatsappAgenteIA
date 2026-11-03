@@ -310,21 +310,24 @@ test('CHAMAR_ATENDENTE_PAUSA: pausa só com flag + yaml + painel permitindo', as
     await h.svc.processIncomingMessage(1, 7, 'quero falar com humano', h.whatsapp);
     return h.pausas();
   };
-  // Com o agente.yaml do repositório (pausar_ia: false) nunca pausa, nem com a flag em on.
-  process.env.CHAMAR_ATENDENTE_PAUSA = 'on';
-  assert.equal(await rodar(CLIENTE, {}), 0, 'yaml do repositório (pausar_ia false): não pausa');
-  // Os casos abaixo usam uma cópia do yaml com pausar_ia: true para exercitar o resto da regra.
-  const tmp = path.join(os.tmpdir(), `agente-pausa-${process.pid}.yaml`);
-  fs.writeFileSync(tmp, fs.readFileSync(path.resolve(__dirname, '..', 'agente', 'agente.yaml'), 'utf8').replace('pausar_ia: false', 'pausar_ia: true'));
-  process.env.AGENTE_YAML_PATH = tmp;
-  process.env.CHAMAR_ATENDENTE_PAUSA = 'test';
-  assert.equal(await rodar(DONO, {}), 1, 'número de teste: pausa');
-  assert.equal(await rodar(CLIENTE, {}), 0, 'cliente no modo test: não pausa');
-  assert.equal(await rodar(DONO, { pause_on_human_reply: 0 }), 0, 'painel com pausa desligada: não pausa');
-  process.env.CHAMAR_ATENDENTE_PAUSA = 'on';
-  assert.equal(await rodar(CLIENTE, {}), 1);
-  delete process.env.AGENTE_YAML_PATH;
-  fs.rmSync(tmp, { force: true });
+  try {
+    // Com o agente.yaml do repositório (pausar_ia: false) nunca pausa, nem com a flag em on.
+    process.env.CHAMAR_ATENDENTE_PAUSA = 'on';
+    assert.equal(await rodar(CLIENTE, {}), 0, 'yaml do repositório (pausar_ia false): não pausa');
+    // Os casos abaixo usam uma cópia do yaml com pausar_ia: true para exercitar o resto da regra.
+    const tmp = path.join(os.tmpdir(), `agente-pausa-${process.pid}.yaml`);
+    fs.writeFileSync(tmp, fs.readFileSync(path.resolve(__dirname, '..', 'agente', 'agente.yaml'), 'utf8').replace('pausar_ia: false', 'pausar_ia: true'));
+    process.env.AGENTE_YAML_PATH = tmp;
+    process.env.CHAMAR_ATENDENTE_PAUSA = 'test';
+    assert.equal(await rodar(DONO, {}), 1, 'número de teste: pausa');
+    assert.equal(await rodar(CLIENTE, {}), 0, 'cliente no modo test: não pausa');
+    assert.equal(await rodar(DONO, { pause_on_human_reply: 0 }), 0, 'painel com pausa desligada: não pausa');
+    process.env.CHAMAR_ATENDENTE_PAUSA = 'on';
+    assert.equal(await rodar(CLIENTE, {}), 1);
+  } finally {
+    delete process.env.AGENTE_YAML_PATH;
+    fs.rmSync(path.join(os.tmpdir(), `agente-pausa-${process.pid}.yaml`), { force: true });
+  }
   limparFlags();
 });
 

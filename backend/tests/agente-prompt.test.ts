@@ -192,6 +192,13 @@ test('agente.yaml v2: regra fixa do comprovante (não confirmar pagamento nem va
   assert.match(r.texto, /nunca confirm/i);
   assert.match(r.texto, /valor/i);
   assert.match(r.texto, /equipe vai conferir/i);
+  assert.match(r.texto, /já caiu/i, 'cobre a pergunta solta');
+  assert.match(r.texto, /prevalece sobre a personalidade, os tópicos/i, 'vale sobre painel, tópico (chave Pix) e texto lido da mídia');
+  // no system a R6 vem antes da personalidade do painel
+  const { buildSystemFixo } = require('../src/services/agentePrompt');
+  const sys = buildSystemFixo(cfg, PAINEL, TOPICOS, MIDIAS).text;
+  assert.ok(sys.includes('nunca confirme que um pagamento foi feito'), 'R6 entra no system');
+  assert.ok(sys.indexOf('nunca confirme que um pagamento') < sys.indexOf('Seja gentil'), 'R6 antes da personalidade');
   assert.equal(new Set(cfg.regras.map((x: any) => x.id)).size, cfg.regras.length);
 });
 
