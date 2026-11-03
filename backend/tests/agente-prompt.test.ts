@@ -179,7 +179,20 @@ test('agente.yaml do repositório é válido e tem as seções do esquema', () =
   assert.ok(cfg.regras.length >= 3);
   assert.deepEqual(cfg.ferramentas.map((f: any) => f.nome), ['enviar_midia', 'chamar_atendente']);
   assert.ok(cfg.conhecimento.excluir_gatilhos.includes('#contatoia'));
-  assert.equal(cfg.handoff.pausar_ia, true, 'item 6: pausa no handoff (só vale com CHAMAR_ATENDENTE_PAUSA)');
+  assert.equal(cfg.handoff.pausar_ia, false, 'decisão do dono 03/11: chamar o atendente NÃO pausa a IA');
+});
+
+test('agente.yaml v2: regra fixa do comprovante (não confirmar pagamento nem valor)', () => {
+  const { loadAgenteYaml } = require('../src/services/agentePrompt');
+  const cfg = loadAgenteYaml();
+  assert.ok(cfg.versao >= 2, 'regra nova sobe a versão');
+  const r = cfg.regras.find((x: any) => x.id === 'R6');
+  assert.ok(r, 'regra R6 existe');
+  assert.match(r.texto, /comprovante/i);
+  assert.match(r.texto, /nunca confirm/i);
+  assert.match(r.texto, /valor/i);
+  assert.match(r.texto, /equipe vai conferir/i);
+  assert.equal(new Set(cfg.regras.map((x: any) => x.id)).size, cfg.regras.length);
 });
 
 test('agente.yaml inválido é recusado com mensagem clara', () => {
@@ -308,7 +321,7 @@ test('agente.yaml semanticamente inválido é recusado', () => {
   assert.doesNotThrow(() => parseAgenteYaml(ok));
   assert.throws(() => parseAgenteYaml(ok.replace('campo: services', 'campo: {x: 1}')), /painel/);
   assert.throws(() => parseAgenteYaml(ok.replace('incluir_tipos: [topic, media]', 'incluir_tipos: [topic, foto]')), /incluir_tipos/);
-  assert.throws(() => parseAgenteYaml(ok.replace('pausar_ia: true', 'pausar_ia: talvez')), /pausar_ia/);
+  assert.throws(() => parseAgenteYaml(ok.replace('pausar_ia: false', 'pausar_ia: talvez')), /pausar_ia/);
 });
 
 test('system acima de AGENTE_SYSTEM_MAX_CHARS: volta ao prompt antigo (RAG) no turno', async () => {
