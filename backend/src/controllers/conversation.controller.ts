@@ -300,8 +300,6 @@ export const getConversation = async (
         isAutoResponding: isAutoResponding,
         needsIntervention,
         interventionResolvedAt: conversation.intervention_resolved_at || null,
-        handler: (conversation as any).handler || 'none',
-        origin: (conversation as any).origin || 'inbound',
         cliente: clienteData,
       },
       messages: formattedMessages,
@@ -515,19 +513,13 @@ export const sendMessage = async (
     const authReq = req as AuthRequest;
     const userId = authReq.userId!;
 
-    const { conversationId, content, source: requestedSource } = req.body;
+    const { conversationId, content } = req.body;
 
     if (!conversationId || !content) {
       const appError: AppError = new Error('ID de conversa e conteúdo são obrigatórios');
       appError.statusCode = 400;
       throw appError;
     }
-
-    // Este endpoint é usado tanto pelo dashboard (atendente humano) quanto por scripts
-    // internos de disparo em lote de campanhas/fidelização (ex.: send_bulk_notifications.ts).
-    // Só aceitamos a marcação explícita 'automation' vinda do corpo da requisição — qualquer
-    // outro valor (ou ausência) permanece 'human', o padrão real deste endpoint.
-    const messageSource = requestedSource === 'automation' ? 'automation' : 'human';
 
     const conversation = await conversationModel.findById(conversationId);
 
@@ -558,7 +550,7 @@ export const sendMessage = async (
     // Enviar mensagem via WhatsApp
     // O service.sendMessage tem lógica de self-healing para verificar estado real
     try {
-      await whatsappService.sendMessage(conversation.contact_number, content, false, false, conversation.lid, messageSource);
+      await whatsappService.sendMessage(conversation.contact_number, content);
     } catch (sendError: any) {
       logger.error(`[sendMessage] Erro ao enviar: ${sendError.message}`);
 
@@ -630,7 +622,7 @@ export const sendMedia = async (
     // Enviar mídia com caption cadastrado
     // isFromAI = false porque é o usuário que está enviando manualmente
     const caption = media.caption && media.caption.trim() ? media.caption.trim() : undefined;
-    await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, false, mediaId, 0, undefined, 'human');
+    await whatsappService.sendMedia(conversation.contact_number, media.file_path, caption, false, mediaId);
 
     res.json({
       message: 'Mídia enviada com sucesso',

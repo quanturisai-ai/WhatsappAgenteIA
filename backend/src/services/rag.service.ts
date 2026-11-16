@@ -1,4 +1,4 @@
-import { OpenRouterService } from './openrouter.service';
+import { OllamaService } from './ollama.service';
 import { ChromaDBService } from './chromadb.service';
 import { AgentConfigModel } from '../models/agentConfig.model';
 import { ConversationModel } from '../models/conversation.model';
@@ -13,7 +13,7 @@ import { TestChatLogger } from '../utils/testChatLogger';
 import { WhatsAppConversationLogger } from '../utils/whatsappConversationLogger';
 
 export class RAGService {
-  private ollamaService: OpenRouterService;
+  private ollamaService: OllamaService;
   private chromaService: ChromaDBService;
   private agentConfigModel: AgentConfigModel;
   private conversationModel: ConversationModel;
@@ -28,7 +28,7 @@ export class RAGService {
   private readonly PRIORITY_WEIGHT = 0.2; // Peso para prioridade do tópico
 
   constructor() {
-    this.ollamaService = new OpenRouterService();
+    this.ollamaService = new OllamaService();
     this.chromaService = new ChromaDBService();
     this.agentConfigModel = new AgentConfigModel();
     this.conversationModel = new ConversationModel();
@@ -882,7 +882,7 @@ export class RAGService {
       // Construir prompt com contexto
       const prompt = await this.buildPrompt(userId, conversationId, userMessage, includeHistory, customHistory);
 
-      // Gerar resposta usando OpenRouterService (usando modelo e parâmetros do AgentConfig)
+      // Gerar resposta usando OllamaService (usando modelo e parâmetros do AgentConfig)
       const responseText = await this.ollamaService.generateResponse(prompt, undefined, generationModel, generationOptions);
 
       // Se for teste (conversationId === 0), logar prompt e resposta para curadoria
@@ -993,7 +993,7 @@ export class RAGService {
 
       prompt += `Última pergunta do cliente: ${lastClientMessage}`;
 
-      // Gerar resposta usando OpenRouterService (usando modelo e parâmetros do AgentConfig)
+      // Gerar resposta usando OllamaService (usando modelo e parâmetros do AgentConfig)
       const responseText = await this.ollamaService.generateResponse(prompt, undefined, generationModel, generationOptions);
 
       // Se for conversa real (conversationId !== 0), logar prompt e resposta para curadoria

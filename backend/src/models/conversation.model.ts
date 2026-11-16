@@ -31,15 +31,12 @@ export class ConversationModel {
              c.lid 
            ) as contact_name,
            c.lid,
-           c.status,
-           c.auto_responding,
-           c.last_message_at,
-           c.needs_intervention,
+           c.status, 
+           c.auto_responding, 
+           c.last_message_at, 
+           c.needs_intervention, 
            c.intervention_resolved_at,
-           c.handler,
-           c.origin,
-           c.last_client_message_at,
-           c.created_at,
+           c.created_at, 
            c.updated_at,
            -- Dados do cliente VM Lav (do primeiro encontrado no grupo)
            MIN(cl.id) as cliente_id,
@@ -413,18 +410,6 @@ export class ConversationModel {
         fields.push('intervention_resolved_at = ?');
         values.push(updates.intervention_resolved_at || null);
       }
-      if (updates.handler !== undefined) {
-        fields.push('handler = ?');
-        values.push(updates.handler);
-      }
-      if (updates.origin !== undefined) {
-        fields.push('origin = ?');
-        values.push(updates.origin);
-      }
-      if (updates.last_client_message_at !== undefined) {
-        fields.push('last_client_message_at = ?');
-        values.push(updates.last_client_message_at);
-      }
 
       if (fields.length === 0) {
         return await this.findById(id);
@@ -518,45 +503,6 @@ export class ConversationModel {
   }
 
   /**
-   * Buscar conversas ativas (new ou in_progress) junto com a data da última mensagem
-   * RECEBIDA DO CLIENTE. Usado pelo job de auto-finalização para medir inatividade do
-   * cliente, em vez de last_message_at (que é renovado por qualquer mensagem enviada,
-   * inclusive disparos automáticos de fidelização/campanha).
-   *
-   * Lê a coluna materializada conversations.last_client_message_at diretamente (populada
-   * pelo backfill da Fase 2 para o histórico e mantida em tempo real pelo runtime desde a
-   * Fase 4 — ver handleIncomingMessage em whatsapp.service.ts). Antes desta coluna existir,
-   * este método calculava o valor via subquery a cada chamada.
-   */
-  async findActiveConversationsWithLastClientMessage(): Promise<
-    Array<Conversation & { last_client_message_at: Date | null }>
-  > {
-    const conn = await pool.getConnection();
-    try {
-      const queryResult = await conn.query(
-        `SELECT c.id, c.user_id, c.contact_number, c.contact_name, c.status,
-                c.auto_responding, c.last_message_at, c.needs_intervention, c.intervention_resolved_at,
-                c.last_client_message_at, c.created_at, c.updated_at
-         FROM conversations c
-         WHERE c.status IN ('new', 'in_progress')`
-      ) as any;
-
-      let rows: any;
-      if (Array.isArray(queryResult)) {
-        rows = Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
-      } else if (queryResult && typeof queryResult === 'object') {
-        rows = [queryResult];
-      } else {
-        return [];
-      }
-
-      return Array.isArray(rows) ? rows : [];
-    } finally {
-      conn.release();
-    }
-  }
-
-  /**
    * Buscar conversas ativas (new ou in_progress) com última mensagem anterior à data fornecida
    * @param beforeDate Data limite - conversas com última mensagem antes desta data
    * @returns Array de conversas antigas
@@ -630,8 +576,6 @@ export class ConversationModel {
       messageCount: Number(row.total_messages) || 0,
       needsIntervention,
       interventionResolvedAt: row.intervention_resolved_at || null,
-      handler: row.handler || 'none',
-      origin: row.origin || 'inbound',
     };
   }
 
@@ -653,8 +597,6 @@ export class ConversationModel {
           c.last_message_at,
           c.needs_intervention,
           c.intervention_resolved_at,
-          c.handler,
-          c.origin,
           c.created_at,
           c.updated_at,
           c.lid,
@@ -720,8 +662,6 @@ export class ConversationModel {
           c.last_message_at,
           c.needs_intervention,
           c.intervention_resolved_at,
-          c.handler,
-          c.origin,
           c.created_at,
           c.updated_at,
           c.lid,

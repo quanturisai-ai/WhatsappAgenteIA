@@ -53,7 +53,7 @@ export const errorHandler = (
 
 export const notFoundHandler = (
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): void => {
   const error: AppError = new Error(`Rota não encontrada: ${req.originalUrl}`);

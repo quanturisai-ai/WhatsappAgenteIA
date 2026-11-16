@@ -4,7 +4,6 @@ import { PremioModel, TipoServico } from '../models/premio.model';
 import { PremioClienteModel, PremioCliente } from '../models/premioCliente.model';
 import { VmLavClienteModel } from '../models/vmLavCliente.model';
 import { VmLavPedidoModel } from '../models/vmLavPedido.model';
-import { VmLavVoucherModel } from '../models/vmLavVoucher.model';
 import { VmLavService } from './vmLav.service';
 import { normalizeCpfToDigits, normalizeCpfColumnSql } from '../utils/cpfUtils';
 
@@ -52,7 +51,6 @@ export class FidelizacaoService {
   private clienteModel: VmLavClienteModel;
   private vmLavPedidoModel: VmLavPedidoModel;
   private vmLavService: VmLavService;
-  private voucherModel: VmLavVoucherModel;
 
   constructor() {
     this.premioModel = new PremioModel();
@@ -60,7 +58,6 @@ export class FidelizacaoService {
     this.clienteModel = new VmLavClienteModel();
     this.vmLavPedidoModel = new VmLavPedidoModel();
     this.vmLavService = new VmLavService();
-    this.voucherModel = new VmLavVoucherModel();
   }
 
   /**
@@ -1036,186 +1033,13 @@ export class FidelizacaoService {
     }
 
     const dataValidade = new Date(dataTermino);
-    // Gravar também o valor usado na geração — permite detectar divergência mesmo sem sync vm_lav_vouchers
-    await this.premioClienteModel.atualizarVoucher(premioClienteId, resCodigo.codigo, dataValidade, valorVoucher);
+    await this.premioClienteModel.atualizarVoucher(premioClienteId, resCodigo.codigo, dataValidade);
     await this.premioClienteModel.updateAutomacao(premioClienteId, { voucher_erro_ultimo: null });
 
     return {
       success: true,
       codigo_voucher: resCodigo.codigo,
       data_validade: dataValidade,
-    };
-  }
-
-  /**
-   * Regera o voucher de uma conquista após reajuste de valor do prêmio.
-   * Fluxo: valida condições → inativa antigo na VM → cria novo → persiste.
-   * Retorna a conquista atualizada (com codigo_voucher_anterior) ou erro descritivo.
-   */
-  async regerarVoucherPorConquista(
-    premioClienteId: number,
-    userId: number
-  ): Promise<{
-    success: boolean;
-    premioCliente?: PremioCliente;
-    novoCodigo?: string;
-    codigoAnterior?: string;
-    error?: string;
-  }> {
-    // 1. Carregar a conquista
-    const pc = await this.premioClienteModel.findById(premioClienteId);
-    if (!pc || pc.user_id !== userId) {
-      return { success: false, error: 'Conquista não encontrada.' };
-    }
-    if (pc.utilizado) {
-      return { success: false, error: 'Esta conquista já foi utilizada.' };
-    }
-    if (!pc.codigo_voucher) {
-      return { success: false, error: 'Esta conquista não possui voucher gerado.' };
-    }
-
-    // 2. Carregar o prêmio
-    const premio = await this.premioModel.findById(pc.premio_id);
-    if (!premio) {
-      return { success: false, error: 'Prêmio não encontrado.' };
-    }
-    if (premio.servico !== 'LAVAGEM' && premio.servico !== 'SECAGEM') {
-      return { success: false, error: 'Só é possível regerar vouchers de prêmios LAVAGEM ou SECAGEM.' };
-    }
-    if (!premio.valor_voucher || premio.valor_voucher <= 0) {
-      return { success: false, error: 'Prêmio sem valor de voucher configurado.' };
-    }
-
-    // 3. Carregar voucher local (vm_lav_vouchers) pelo código
-    const voucherLocal = await this.voucherModel.findByCodigo(pc.codigo_voucher, userId);
-    if (!voucherLocal) {
-      return { success: false, error: 'Voucher não encontrado na base local. Execute uma sincronização primeiro.' };
-    }
-
-    // 4. Validar condições para regeração (versão segura — mesmo critério do frontend)
-    if (!voucherLocal.ativo) {
-      return { success: false, error: 'O voucher já está inativo na plataforma VM.' };
-    }
-    if (voucherLocal.saldo <= 0) {
-      return { success: false, error: 'O voucher já foi totalmente utilizado (saldo zero).' };
-    }
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    if (voucherLocal.validade_fim && new Date(voucherLocal.validade_fim) < hoje) {
-      return { success: false, error: 'O voucher está expirado. Não é necessário reemitir.' };
-    }
-    // Valores com tolerância de centavos
-    const diff = Math.abs(voucherLocal.valor - premio.valor_voucher);
-    if (diff < 0.01) {
-      return { success: false, error: 'O valor do voucher já está atualizado. Não é necessário reemitir.' };
-    }
-
-    // 5. Calcular nova quantidade de utilizações com base no saldo restante
-    // Se o voucher valia 2× o valor unitário original e saldo = 1× → reemitir 1 utilização
-    const valorUnitarioOriginal = voucherLocal.valor / Math.max(1, Math.round(voucherLocal.valor / premio.valor_voucher));
-    const novaQtd = Math.max(1, Math.round(voucherLocal.saldo / valorUnitarioOriginal));
-
-    // 6. Calcular nova data de validade
-    //    Manter a data original se restar >= 10 dias; senão hoje + 10 dias
-    const validadeFimOriginal = voucherLocal.validade_fim ? new Date(voucherLocal.validade_fim) : null;
-    let novaValidadeFim: Date;
-    if (validadeFimOriginal) {
-      const diasRestantes = Math.floor((validadeFimOriginal.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
-      novaValidadeFim = diasRestantes >= 10 ? validadeFimOriginal : new Date(hoje.getTime() + 10 * 24 * 60 * 60 * 1000);
-    } else {
-      novaValidadeFim = new Date(hoje.getTime() + (premio.validade_dias ?? 34) * 24 * 60 * 60 * 1000);
-    }
-    novaValidadeFim.setHours(3, 0, 0, 0);
-
-    const dataInicio = new Date(hoje);
-    dataInicio.setHours(3, 0, 0, 0);
-
-    const codigoAnterior = pc.codigo_voucher;
-    const idVoucherVmAnterior = voucherLocal.id_voucher_vm;
-
-    // 7. Bloquear o backoff para evitar corrida com a auto-geração
-    await this.premioClienteModel.updateAutomacao(premioClienteId, { voucher_tentativa_em: new Date() });
-
-    // 8. Inativar voucher antigo na VM
-    const resInativar = await this.vmLavService.inativarVoucher(userId, idVoucherVmAnterior);
-    if (!resInativar.success) {
-      // Limpar backoff — não houve mudança real
-      await this.premioClienteModel.updateAutomacao(premioClienteId, { voucher_tentativa_em: null });
-      return { success: false, error: `Falha ao inativar voucher antigo na VM: ${resInativar.error}` };
-    }
-
-    // 9. Buscar dados do cliente para criação do novo voucher
-    const cliente = await this.clienteModel.findByCpf(userId, pc.cpf_cliente);
-    const nomeCliente = cliente?.nome?.trim();
-    if (!nomeCliente) {
-      await this.vmLavService.reativarVoucher(userId, idVoucherVmAnterior);
-      await this.premioClienteModel.updateAutomacao(premioClienteId, { voucher_tentativa_em: null });
-      return { success: false, error: 'Cliente não encontrado. Voucher antigo reativado.' };
-    }
-
-    const resItens = await this.vmLavService.buscarItensRestricaoCliente(userId, nomeCliente);
-    if (!resItens.success || resItens.idRestricao == null) {
-      await this.vmLavService.reativarVoucher(userId, idVoucherVmAnterior);
-      await this.premioClienteModel.updateAutomacao(premioClienteId, { voucher_tentativa_em: null });
-      return { success: false, error: `Erro ao buscar cliente na API VM: ${resItens.error}. Voucher antigo reativado.` };
-    }
-
-    // 10. Criar novo voucher na VM
-    const resCriar = await this.vmLavService.criarVoucherFidelidade(userId, {
-      idRestricao: resItens.idRestricao,
-      descricaoCliente: resItens.descricao!,
-      valor: String(premio.valor_voucher.toFixed(2)),
-      quantidadeUtilizacoes: novaQtd,
-      dataInicio,
-      dataTermino: novaValidadeFim,
-      servico: premio.servico as 'LAVAGEM' | 'SECAGEM',
-    });
-
-    if (!resCriar.success || resCriar.idVoucher == null) {
-      // Tentar reativar o antigo como rollback
-      await this.vmLavService.reativarVoucher(userId, idVoucherVmAnterior);
-      await this.premioClienteModel.updateAutomacao(premioClienteId, {
-        voucher_tentativa_em: null,
-        voucher_erro_ultimo: `Falha ao criar voucher novo: ${resCriar.error}. Voucher antigo reativado.`,
-      });
-      return { success: false, error: `Falha ao criar novo voucher na VM: ${resCriar.error}. Voucher antigo reativado.` };
-    }
-
-    // 11. Obter código do novo voucher
-    let novoCodigo: string | undefined;
-    for (let tentativa = 0; tentativa < 3; tentativa++) {
-      const resCode = await this.vmLavService.obterCodigoVoucher(userId, resCriar.idVoucher);
-      if (resCode.success && resCode.codigo) {
-        novoCodigo = resCode.codigo;
-        break;
-      }
-      if (tentativa < 2) await new Promise(r => setTimeout(r, 1500));
-    }
-
-    if (!novoCodigo) {
-      await this.premioClienteModel.updateAutomacao(premioClienteId, {
-        voucher_erro_ultimo: 'Novo voucher criado na VM mas código não obtido. Sincronize para reconciliar.',
-      });
-      logger.error(`[RegerarVoucher] Voucher novo criado (id=${resCriar.idVoucher}) mas código não obtido para pc ${premioClienteId}`);
-      return { success: false, error: 'Novo voucher criado na VM mas não foi possível obter o código. Execute uma sincronização para reconciliar.' };
-    }
-
-    // 12. Persistir no banco
-    const pcAtualizado = await this.premioClienteModel.registrarReemissaoVoucher(
-      premioClienteId,
-      novoCodigo,
-      novaValidadeFim,
-      codigoAnterior,
-      premio.valor_voucher
-    );
-
-    logger.info(`[RegerarVoucher] Voucher reemitido para pc ${premioClienteId}: ${codigoAnterior} → ${novoCodigo} (${novaQtd}× R$${premio.valor_voucher})`);
-
-    return {
-      success: true,
-      premioCliente: pcAtualizado,
-      novoCodigo,
-      codigoAnterior,
     };
   }
 }

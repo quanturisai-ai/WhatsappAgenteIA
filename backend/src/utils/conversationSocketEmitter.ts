@@ -24,6 +24,12 @@ export function emitConversationUpdated(userId: number, conversation: object): v
   );
 }
 
+export function emitToUserEvent(userId: number, event: string, data: object): void {
+  emitToUser(userId, event, data).catch((err) =>
+    logger.error(`Erro ao emitir ${event}: ${err?.message || err}`)
+  );
+}
+
 export function emitConversationNew(userId: number, conversation: object): void {
   emitToUser(userId, 'conversation:new', { conversation }).catch((err) =>
     logger.error(`Erro ao emitir conversation:new: ${err?.message || err}`)

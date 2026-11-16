@@ -131,13 +131,44 @@ export class FidelizacaoRegrasService {
             enviados++;
             logger.info(`[SIMULAÇÃO] Automação regra ${regra.id} para ${cliente.nome || cpfNorm}`);
           } else {
-            // Grava o registro de notificação ANTES de enviar o WhatsApp (e não depois).
-            // Isso fecha a janela de corrida: qualquer outra execução concorrente que
-            // chame verificarBloqueios() para o mesmo cliente/regra já enxergará este
-            // registro e será bloqueada, em vez de também enviar a mesma mensagem.
-            let notificacaoId: number | null = null;
             try {
-              const registro = await this.notificacaoModel.create({
+              const whatsappManager = WhatsAppManager.getInstance();
+              const whatsappService = whatsappManager.getServiceSync(userId);
+              if (whatsappService?.isReady()) {
+                await whatsappService.sendMessage(cliente.telefone, mensagem);
+                await this.notificacaoModel.create({
+                  user_id: userId,
+                  cpf_cliente: formatCpfWithSeparators(cpfNorm) ?? cpfNorm,
+                  pedido_id: null,
+                  regra_id: regra.id,
+                  data_venda: null,
+                  tipo_notificacao: tipo.codigo,
+                  premio_id: null,
+                  mensagem_enviada: mensagem,
+                  enviado_whatsapp: true,
+                  data_envio: new Date(),
+                  erro: null,
+                } as any);
+                enviados++;
+                logger.info(`Automação regra ${regra.id} enviada para ${cliente.nome || cpfNorm}`);
+              } else {
+                await this.notificacaoModel.create({
+                  user_id: userId,
+                  cpf_cliente: formatCpfWithSeparators(cpfNorm) ?? cpfNorm,
+                  pedido_id: null,
+                  regra_id: regra.id,
+                  data_venda: null,
+                  tipo_notificacao: tipo.codigo,
+                  premio_id: null,
+                  mensagem_enviada: mensagem,
+                  enviado_whatsapp: false,
+                  data_envio: new Date(),
+                  erro: 'WhatsApp não está pronto',
+                } as any);
+                ignorados++;
+              }
+            } catch (err: any) {
+              await this.notificacaoModel.create({
                 user_id: userId,
                 cpf_cliente: formatCpfWithSeparators(cpfNorm) ?? cpfNorm,
                 pedido_id: null,
@@ -148,25 +179,8 @@ export class FidelizacaoRegrasService {
                 mensagem_enviada: mensagem,
                 enviado_whatsapp: false,
                 data_envio: new Date(),
-                erro: null,
+                erro: err?.message || String(err),
               } as any);
-              notificacaoId = registro.id;
-
-              const whatsappManager = WhatsAppManager.getInstance();
-              const whatsappService = whatsappManager.getServiceSync(userId);
-              if (whatsappService?.isReady()) {
-                await whatsappService.sendMessage(cliente.telefone, mensagem, false, false, null, 'automation');
-                await this.notificacaoModel.update(notificacaoId, { enviado_whatsapp: true });
-                enviados++;
-                logger.info(`Automação regra ${regra.id} enviada para ${cliente.nome || cpfNorm}`);
-              } else {
-                await this.notificacaoModel.update(notificacaoId, { erro: 'WhatsApp não está pronto' });
-                ignorados++;
-              }
-            } catch (err: any) {
-              if (notificacaoId) {
-                await this.notificacaoModel.update(notificacaoId, { erro: err?.message || String(err) });
-              }
               ignorados++;
               logger.error(`Erro ao enviar automação regra ${regra.id} para ${cpfNorm}: ${err?.message}`);
             }

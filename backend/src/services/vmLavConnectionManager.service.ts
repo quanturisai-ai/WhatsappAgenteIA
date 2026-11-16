@@ -7,10 +7,7 @@
  * por concorrência ao compartilhar uma única página entre operações
  */
 
-import puppeteer, { Browser, Page } from 'puppeteer';
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
+import { Browser, Page } from 'puppeteer';
 import axios from 'axios';
 import logger from '../utils/logger';
 
@@ -23,7 +20,6 @@ import {
   renovarTokenMetodo4A_PageGoto_Fixo,
   renovarTokenMetodo4B_PageGoto_Dinamico,
   obterTempoRestanteToken,
-  isTokenDaAplicacao,
 } from '../utils/vmLavTokenRenewal';
 
 export class VmLavConnectionManager {
@@ -544,22 +540,6 @@ export class VmLavConnectionManager {
         VmLavConnectionLogger.logTokenRenewal(userId, false, '4B/4A', 'Tentando Nível 3: token_inicial');
 
         try {
-          // Se o token_inicial JÁ é da aplicação, ele é a recuperação: promover direto.
-          // Reenviá-lo para /login/aplicacao devolve 403 e derruba a cascata para o
-          // Nível 4 (que não funciona) e daí para o login com captcha.
-          if (isTokenDaAplicacao(credentials.token_inicial)) {
-            const tempoRestanteInicial = obterTempoRestanteToken(credentials.token_inicial) || 0;
-
-            if (tempoRestanteInicial > 0) {
-              await this.salvarTokenDireto(userId, credentials.token_inicial, credentials);
-              logger.info(`✅ Token recuperado para user_id ${userId} (Nível 3: token_inicial já era da aplicação) - ${tempoRestanteInicial} min restantes`);
-              VmLavConnectionLogger.logTokenRenewal(userId, true, 'Nível 3 (token_inicial direto)', undefined, tempoRestanteInicial);
-              return credentials.token_inicial;
-            }
-
-            logger.warn(`Nível 3: token_inicial já é da aplicação mas está expirado (${tempoRestanteInicial} min) para user_id ${userId}`);
-          }
-
           const { VmLavService } = await import('./vmLav.service');
           const vmLavService = new VmLavService();
           const novoToken = await vmLavService.obterTokenAplicacao(credentials.token_inicial);
@@ -654,31 +634,10 @@ export class VmLavConnectionManager {
 
       // Nível 5: Falha total - Marcar credencial com erro e notificar
       logger.error(`❌ FALHA TOTAL: Todos os níveis de renovação falharam para user_id ${userId}`);
+      logger.error(`⚠️ INTERVENÇÃO MANUAL NECESSÁRIA - Login com CAPTCHA requerido para user_id ${userId}`);
 
-      // A cascata acima leva minutos. Nesse intervalo a credencial pode ter ficado boa por
-      // outro caminho (reconexão manual do usuário, outra renovação). O objeto `credentials`
-      // em memória é um retrato do início do ciclo — carimbar 'erro' com ele sobrescreve um
-      // estado válido e faz o painel acusar falha inexistente. Reler antes de decidir.
+      // Marcar credencial como erro para que o dashboard exiba alerta
       try {
-        const credenciaisAtuais = await this.credentialsModel.findByUserId(userId);
-        const tokenAtual = credenciaisAtuais?.token_aplicacao;
-        const minutosRestantes = tokenAtual ? (obterTempoRestanteToken(tokenAtual) || 0) : 0;
-
-        if (tokenAtual && minutosRestantes > 0) {
-          logger.info(
-            `Credencial user_id ${userId} foi renovada por outro caminho durante a cascata (${minutosRestantes} min restantes). Não será marcada como 'erro'.`
-          );
-          // Token válido = credencial saudável. Regravar pelo caminho normal também limpa
-          // um 'erro'/ultimo_erro remanescente de uma cascata anterior, que ficaria no painel
-          // acusando falha inexistente.
-          await this.salvarTokenDireto(userId, tokenAtual, credenciaisAtuais!);
-          VmLavConnectionLogger.logTokenRenewal(userId, true, 'Recuperado fora da cascata', undefined, minutosRestantes);
-          return tokenAtual;
-        }
-
-        logger.error(`⚠️ INTERVENÇÃO MANUAL NECESSÁRIA - Login com CAPTCHA requerido para user_id ${userId}`);
-
-        // Marcar credencial como erro para que o dashboard exiba alerta
         await this.credentialsModel.update(credentials.id, {
           status: 'erro',
           ultimo_erro: `Renovação falhou em todos os níveis em ${new Date().toISOString()}. Intervenção manual necessária.`,
@@ -736,13 +695,9 @@ export class VmLavConnectionManager {
         : (credentials.cookies ? JSON.parse(credentials.cookies as any) : []);
       const localStorageExistente = credentials.dados_localstorage || null;
 
-      // Atualizar credenciais com token, expiração.
-      // token_inicial acompanha o token renovado quando ele é da aplicação: sem isso
-      // ele congela no último login humano, expira em 1h e o Nível 3 deixa de existir
-      // como recuperação — restando só o login com captcha.
+      // Atualizar credenciais com token, expiração
       await this.credentialsModel.update(credentials.id, {
         token_aplicacao: token,
-        ...(isTokenDaAplicacao(token) ? { token_inicial: token } : {}),
         token_expira_em: expiracao,
         cookies: cookiesExistentes,
         dados_localstorage: localStorageExistente,
@@ -755,7 +710,7 @@ export class VmLavConnectionManager {
 
       VmLavConnectionLogger.logCredentialsUpdate(
         userId,
-        ['token_aplicacao', 'token_inicial', 'token_expira_em', 'status', 'ultimo_erro'],
+        ['token_aplicacao', 'token_expira_em', 'status', 'ultimo_erro'],
         true
       );
     } catch (error: any) {
@@ -777,13 +732,9 @@ export class VmLavConnectionManager {
     try {
       const expiracao = this.getTokenExpiration(token);
 
-      // Atualizar credenciais com token, expiração, cookies e localStorage.
-      // token_inicial acompanha o token renovado quando ele é da aplicação: sem isso
-      // ele congela no último login humano, expira em 1h e o Nível 3 deixa de existir
-      // como recuperação — restando só o login com captcha.
+      // Atualizar credenciais com token, expiração, cookies e localStorage
       await this.credentialsModel.update(credentials.id, {
         token_aplicacao: token,
-        ...(isTokenDaAplicacao(token) ? { token_inicial: token } : {}),
         token_expira_em: expiracao,
         cookies: cookies,
         dados_localstorage: localStorage,
@@ -796,7 +747,7 @@ export class VmLavConnectionManager {
 
       VmLavConnectionLogger.logCredentialsUpdate(
         userId,
-        ['token_aplicacao', 'token_inicial', 'token_expira_em', 'cookies', 'dados_localstorage', 'status', 'ultimo_erro'],
+        ['token_aplicacao', 'token_expira_em', 'cookies', 'dados_localstorage', 'status', 'ultimo_erro'],
         true
       );
     } catch (error: any) {

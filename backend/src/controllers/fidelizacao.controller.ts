@@ -462,24 +462,12 @@ export const listarConquistas = async (
         params.push(utilizado === 'true' ? 1 : 0);
       }
 
-      // LEFT JOIN com vm_lav_vouchers para dados do voucher emitido (valor, saldo, ativo, validade, id_vm)
-      // Usado para detectar divergência de valor e exibir botão "Regerar voucher"
       const queryResult = await conn.query(
-          `SELECT pc.*,
-             p.descricao as premio_descricao, p.servico as premio_servico,
-             p.valor_voucher as premio_valor_voucher,
-           c.nome as cliente_nome, c.telefone as cliente_telefone,
-           v.valor as voucher_valor_emitido,
-           v.saldo as voucher_saldo,
-           v.ativo as voucher_ativo,
-           v.validade_fim as voucher_validade_fim,
-           v.id_voucher_vm as voucher_id_vm
+        `SELECT pc.*, p.descricao as premio_descricao, p.servico as premio_servico,
+         c.nome as cliente_nome, c.telefone as cliente_telefone
          FROM premios_clientes pc
          INNER JOIN premios p ON pc.premio_id = p.id
          LEFT JOIN vm_lav_clientes c ON pc.user_id = c.user_id AND pc.cpf_cliente = c.cpf
-         LEFT JOIN vm_lav_vouchers v ON v.user_id = pc.user_id
-           AND v.codigo = pc.codigo_voucher
-           AND v.categoria_nome = 'Fidelidade'
          ${whereClause}
          ORDER BY pc.data_conquista DESC
          LIMIT ? OFFSET ?`,
@@ -508,68 +496,24 @@ export const listarConquistas = async (
       }
 
       const total = totalRows && totalRows[0] ? totalRows[0].total : 0;
-      const hoje = new Date();
-      hoje.setHours(0, 0, 0, 0);
 
       res.json({
-        conquistas: rows.map((row: any) => {
-          const premioValor: number | null = row.premio_valor_voucher != null ? parseFloat(row.premio_valor_voucher) : null;
-          const voucherValor: number | null = row.voucher_valor_emitido != null ? parseFloat(row.voucher_valor_emitido) : null;
-          const voucherSaldo: number | null = row.voucher_saldo != null ? parseFloat(row.voucher_saldo) : null;
-          const voucherAtivo: boolean = row.voucher_ativo === 1 || row.voucher_ativo === true;
-          const voucherValidadeFim: Date | null = row.voucher_validade_fim ? new Date(row.voucher_validade_fim) : null;
-          const codigoVoucher: string | null = row.codigo_voucher ?? null;
-          const valorGerado: number | null = row.valor_voucher_gerado != null ? parseFloat(row.valor_voucher_gerado) : null;
-          const isUtilizado = row.utilizado === 1 || row.utilizado === true;
-
-          // PRIMÁRIA: detectar divergência via vm_lav_vouchers (sincronizado da API VM)
-          // Garante verificações de saldo, ativo e validade
-          const divergeViaSync = !!(
-            codigoVoucher && !isUtilizado &&
-            premioValor != null && voucherValor != null &&
-            Math.abs(voucherValor - premioValor) >= 0.01 &&
-            voucherSaldo != null && voucherSaldo > 0 &&
-            voucherAtivo &&
-            (!voucherValidadeFim || voucherValidadeFim >= hoje)
-          );
-
-          // FALLBACK: detectar divergência via valor_voucher_gerado (grava no momento da emissão)
-          // Usado quando vm_lav_vouchers ainda não foi sincronizado desde a criação do voucher
-          // Só aplica se vm_lav_vouchers não tem o registro (voucherValor == null)
-          const divergeViaSalvo = !!(
-            codigoVoucher && !isUtilizado &&
-            premioValor != null && valorGerado != null &&
-            Math.abs(valorGerado - premioValor) >= 0.01 &&
-            voucherValor == null  // somente quando não há dado de sync
-          );
-
-          const precisaRegerar = divergeViaSync || divergeViaSalvo;
-
-          return {
-            id: row.id,
-            cpfCliente: row.cpf_cliente,
-            nomeCliente: row.cliente_nome,
-            telefoneCliente: row.cliente_telefone,
-            premioId: row.premio_id,
-            premioDescricao: row.premio_descricao,
-            premioServico: row.premio_servico,
-            premioValorVoucher: premioValor,
-            dataConquista: row.data_conquista,
-            dataValidade: row.data_validade,
-            dataUtilizacao: row.data_utilizacao,
-            utilizado: row.utilizado === 1 || row.utilizado === true,
-            codigoVoucher,
-            codigoVoucherAnterior: row.codigo_voucher_anterior ?? null,
-            voucherAtualizadoEm: row.voucher_atualizado_em ?? null,
-            observacao: row.observacao,
-            createdAt: row.created_at,
-            // Campos de detecção de reajuste
-            valorVoucherGerado: valorGerado,
-            precisaRegerar,
-            voucherValorEmitido: voucherValor,
-            voucherSaldo,
-          };
-        }),
+        conquistas: rows.map((row: any) => ({
+          id: row.id,
+          cpfCliente: row.cpf_cliente,
+          nomeCliente: row.cliente_nome,
+          telefoneCliente: row.cliente_telefone,
+          premioId: row.premio_id,
+          premioDescricao: row.premio_descricao,
+          premioServico: row.premio_servico,
+          dataConquista: row.data_conquista,
+          dataValidade: row.data_validade,
+          dataUtilizacao: row.data_utilizacao,
+          utilizado: row.utilizado === 1 || row.utilizado === true,
+          codigoVoucher: row.codigo_voucher,
+          observacao: row.observacao,
+          createdAt: row.created_at,
+        })),
         total: Number(total) || 0,
       });
     } finally {
@@ -710,46 +654,6 @@ export const gerarVoucherConquista = async (
 };
 
 /**
- * Regerar voucher de uma conquista após reajuste de valor do prêmio.
- * Inativa o voucher antigo na VM e emite um novo com o valor atualizado.
- */
-export const regerarVoucherConquista = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const authReq = req as AuthRequest;
-    const userId = authReq.userId!;
-    const { id } = req.params;
-    const premioClienteId = parseInt(id, 10);
-
-    const resultado = await fidelizacaoService.regerarVoucherPorConquista(premioClienteId, userId);
-
-    if (!resultado.success) {
-      const appError: AppError = new Error(resultado.error || 'Erro ao regerar voucher');
-      appError.statusCode = 400;
-      throw appError;
-    }
-
-    const pc = resultado.premioCliente!;
-
-    // Construir resposta com todos os campos necessários para atualizar a linha no frontend
-    res.json({
-      message: 'Voucher reemitido com sucesso',
-      novoCodigo: resultado.novoCodigo,
-      codigoAnterior: resultado.codigoAnterior,
-      codigoVoucher: pc.codigo_voucher,
-      codigoVoucherAnterior: pc.codigo_voucher_anterior,
-      dataValidade: pc.data_validade?.toISOString() ?? null,
-      voucherAtualizadoEm: pc.voucher_atualizado_em?.toISOString() ?? null,
-    });
-  } catch (error: any) {
-    next(error);
-  }
-};
-
-/**
  * Listar notificações enviadas (para Config > Fidelização > Notificações)
  */
 export const listarNotificacoes = async (
@@ -866,7 +770,7 @@ export const reenviarNotificacao = async (
       appError.statusCode = 400;
       throw appError;
     }
-    await whatsappService.sendMessage(cliente.telefone, notificacao.mensagem_enviada, false, false, null, 'automation');
+    await whatsappService.sendMessage(cliente.telefone, notificacao.mensagem_enviada);
     await notificacaoModel.update(id, { enviado_whatsapp: true, erro: null });
     res.json({ success: true });
   } catch (error: any) {

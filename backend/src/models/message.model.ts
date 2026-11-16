@@ -1,5 +1,5 @@
 import pool from '../config/database';
-import { Message, Reaction } from '../types';
+import { Message } from '../types';
 import logger from '../utils/logger';
 import { ReactionModel } from './reaction.model';
 
@@ -8,23 +8,6 @@ export class MessageModel {
 
   constructor() {
     this.reactionModel = new ReactionModel();
-  }
-
-  /**
-   * Extrai o array de linhas de um resultado de conn.query(), aceitando tanto o formato
-   * "array de linhas direto" quanto "[rows, metadata]" — o driver mariadb usado aqui
-   * retorna o primeiro formato, mas alguns trechos do código assumiam o segundo
-   * (via "const [rows] = await conn.query(...)"), o que faz `rows` virar a própria
-   * primeira linha (um objeto) em vez do array, quebrando checagens como `rows.length`.
-   */
-  private extractRows(queryResult: any): any[] {
-    if (Array.isArray(queryResult)) {
-      return Array.isArray(queryResult[0]) ? queryResult[0] : queryResult;
-    }
-    if (queryResult && typeof queryResult === 'object') {
-      return [queryResult];
-    }
-    return [];
   }
 
   /**
@@ -62,11 +45,10 @@ export class MessageModel {
   async findById(id: number): Promise<Message | null> {
     const conn = await pool.getConnection();
     try {
-      const queryResult = await conn.query(
-        'SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source, created_at, received_at, read_at FROM messages WHERE id = ?',
+      const [rows] = await conn.query(
+        'SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at FROM messages WHERE id = ?',
         [id]
-      );
-      const rows = this.extractRows(queryResult);
+      ) as any[];
       const message = rows && rows.length > 0 ? rows[0] : null;
       if (message) {
         return await this.addReactionsToMessages(message) as Message;
@@ -91,8 +73,8 @@ export class MessageModel {
         maxAgeDate.setHours(maxAgeDate.getHours() - maxAgeHours);
 
         // Buscar últimas mensagens com filtro de tempo
-        query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source, created_at, received_at, read_at
-                 FROM messages
+        query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at 
+                 FROM messages 
                  WHERE conversation_id = ? 
                    AND created_at >= ?
                  ORDER BY created_at DESC 
@@ -100,8 +82,8 @@ export class MessageModel {
         params = [conversationId, maxAgeDate, limit];
       } else {
         // Buscar todas as mensagens sem filtro de tempo
-        query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source, created_at, received_at, read_at
-                 FROM messages
+        query = `SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at 
+                 FROM messages 
                  WHERE conversation_id = ? 
                  ORDER BY created_at DESC 
                  LIMIT ?`;
@@ -164,19 +146,15 @@ export class MessageModel {
     }
   }
 
-  async findByMessageId(messageId: string | null | undefined): Promise<Message | null> {
-    if (!messageId) {
-      return null;
-    }
+  async findByMessageId(messageId: string): Promise<Message | null> {
     const conn = await pool.getConnection();
     try {
       logger.debug(`Buscando mensagem por message_id: "${messageId}" (tamanho: ${messageId.length})`);
 
-      const queryResult = await conn.query(
-        'SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source, created_at, received_at, read_at FROM messages WHERE message_id = ?',
+      const [rows] = await conn.query(
+        'SELECT id, conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, created_at, received_at, read_at FROM messages WHERE message_id = ?',
         [messageId]
-      );
-      const rows = this.extractRows(queryResult);
+      ) as any[];
 
       logger.debug(`Resultado da busca: ${rows ? rows.length : 0} mensagem(s) encontrada(s)`);
 
@@ -184,11 +162,10 @@ export class MessageModel {
         logger.debug(`Mensagem encontrada: id=${rows[0].id}, message_id="${rows[0].message_id}"`);
       } else {
         // Tentar buscar sem case sensitivity e verificar se há mensagens similares
-        const allRowsResult = await conn.query(
+        const [allRows] = await conn.query(
           'SELECT id, message_id FROM messages WHERE message_id LIKE ? LIMIT 5',
           [`%${messageId.substring(messageId.length - 20)}%`]
-        );
-        const allRows = this.extractRows(allRowsResult);
+        ) as any[];
         if (allRows && allRows.length > 0) {
           logger.debug(`Mensagens similares encontradas:`, allRows.map((r: any) => ({ id: r.id, message_id: r.message_id })));
         }
@@ -208,7 +185,7 @@ export class MessageModel {
     const conn = await pool.getConnection();
     try {
       const queryResult = await conn.query(
-        'INSERT INTO messages (conversation_id, message_id, content, message_type, media_id, direction, is_from_ai, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO messages (conversation_id, message_id, content, message_type, media_id, direction, is_from_ai) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [
           message.conversation_id,
           message.message_id || null,
@@ -217,7 +194,6 @@ export class MessageModel {
           message.media_id || null,
           message.direction,
           message.is_from_ai || false,
-          message.source || null,
         ]
       ) as any;
 
@@ -276,10 +252,6 @@ export class MessageModel {
       if (data.is_from_ai !== undefined) {
         updates.push('is_from_ai = ?');
         values.push(data.is_from_ai ? 1 : 0);
-      }
-      if (data.source !== undefined) {
-        updates.push('source = ?');
-        values.push(data.source);
       }
 
       if (updates.length === 0) {

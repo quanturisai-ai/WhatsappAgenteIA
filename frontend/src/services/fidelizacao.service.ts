@@ -62,24 +62,13 @@ export interface Conquista {
   premioId: number;
   premioDescricao: string;
   premioServico: TipoServico;
-  premioValorVoucher: number | null;
-  /** Valor que foi usado para gerar o voucher (grava na emissão; detecta divergência mesmo sem sync) */
-  valorVoucherGerado: number | null;
   dataConquista: string;
   dataValidade: string | null;
   dataUtilizacao: string | null;
   utilizado: boolean;
   codigoVoucher: string | null;
-  /** Código do voucher inativado na última reemissão por reajuste de valor */
-  codigoVoucherAnterior: string | null;
-  /** Quando o voucher foi reemitido por reajuste de valor (ISO string) */
-  voucherAtualizadoEm: string | null;
   observacao: string | null;
   createdAt: string;
-  /** Flag calculado no backend: valor emitido ≠ valor atual do prêmio e condições OK */
-  precisaRegerar: boolean;
-  voucherValorEmitido: number | null;
-  voucherSaldo: number | null;
 }
 
 export interface PedidoDetalhado {
@@ -104,8 +93,8 @@ class FidelizacaoService {
   async criarPremio(premio: Omit<Premio, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<Premio> {
     const response = await api.post('/fidelizacao/premios', {
       ...premio,
-      data_inicio_utilizacoes: premio.data_inicio_utilizacoes instanceof Date
-        ? premio.data_inicio_utilizacoes.toISOString().split('T')[0]
+      data_inicio_utilizacoes: (premio.data_inicio_utilizacoes as unknown) instanceof Date
+        ? (premio.data_inicio_utilizacoes as unknown as Date).toISOString().split('T')[0]
         : premio.data_inicio_utilizacoes,
     });
     return response.data.premio;
@@ -115,8 +104,8 @@ class FidelizacaoService {
     const payload: any = { ...premio };
     // Sempre processar data_inicio_utilizacoes se estiver presente no objeto
     if ('data_inicio_utilizacoes' in premio) {
-      payload.data_inicio_utilizacoes = premio.data_inicio_utilizacoes instanceof Date
-        ? premio.data_inicio_utilizacoes.toISOString().split('T')[0]
+      payload.data_inicio_utilizacoes = (premio.data_inicio_utilizacoes as unknown) instanceof Date
+        ? (premio.data_inicio_utilizacoes as unknown as Date).toISOString().split('T')[0]
         : premio.data_inicio_utilizacoes;
     }
     const response = await api.put(`/fidelizacao/premios/${id}`, payload);
@@ -206,19 +195,6 @@ class FidelizacaoService {
 
   async gerarVoucherConquista(id: number): Promise<{ codigo_voucher: string; data_validade: string }> {
     const response = await api.put(`/fidelizacao/conquistas/${id}/gerar-voucher`);
-    return response.data;
-  }
-
-  async regerarVoucherConquista(id: number): Promise<{
-    message: string;
-    novoCodigo: string;
-    codigoAnterior: string;
-    codigoVoucher: string;
-    codigoVoucherAnterior: string;
-    dataValidade: string | null;
-    voucherAtualizadoEm: string | null;
-  }> {
-    const response = await api.put(`/fidelizacao/conquistas/${id}/regerar-voucher`);
     return response.data;
   }
 

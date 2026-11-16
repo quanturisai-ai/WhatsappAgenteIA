@@ -281,7 +281,6 @@ export class MediaModel {
       return rows.filter((media: Media) => {
         const title = (media.title || '').toLowerCase();
         const description = (media.description || '').toLowerCase();
-        const searchText = `${title} ${description}`;
 
         // Verificar se alguma palavra da query corresponde ao título ou descrição
         return normalizedQueryWords.some(queryWord => {

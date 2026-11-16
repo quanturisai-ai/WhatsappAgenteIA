@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import { OpenRouterService } from '../services/openrouter.service';
+import { OllamaService } from '../services/ollama.service';
 import logger from '../utils/logger';
 
-const openRouterService = new OpenRouterService();
+const ollamaService = new OllamaService();
 
 /**
- * Listar todos os modelos de geração disponíveis no OpenRouter
+ * Listar todos os modelos disponíveis no Ollama
  */
 export const listModels = async (
   _req: Request,
@@ -13,13 +13,13 @@ export const listModels = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const models = await openRouterService.listModels();
+    const models = await ollamaService.listModels();
     
     res.json({
       models: models.map(m => ({
         name: m.name,
         size: m.size,
-        sizeFormatted: m.size > 0 ? `${(m.size / 1024 / 1024 / 1024).toFixed(2)} GB` : 'N/A',
+        sizeFormatted: `${(m.size / 1024 / 1024 / 1024).toFixed(2)} GB`,
         modifiedAt: m.modified_at,
       })),
     });
@@ -30,7 +30,7 @@ export const listModels = async (
 };
 
 /**
- * Verificar saúde do OpenRouter
+ * Verificar saúde do Ollama
  */
 export const checkHealth = async (
   _req: Request,
@@ -38,14 +38,14 @@ export const checkHealth = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const isHealthy = await openRouterService.checkHealth();
+    const isHealthy = await ollamaService.checkHealth();
     
     res.json({
       healthy: isHealthy,
-      provider: 'openrouter',
     });
   } catch (error: any) {
-    logger.error(`Erro ao verificar saúde do OpenRouter: ${error.message}`);
+    logger.error(`Erro ao verificar saúde do Ollama: ${error.message}`);
     next(error);
   }
 };
+

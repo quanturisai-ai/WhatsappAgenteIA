@@ -27,12 +27,6 @@ Segue a entrega do seu prêmio: {descricao_premio}
 
 Use o código e a validade informados abaixo ao utilizar o voucher.`;
 
-/** Prefixo inserido no início da mensagem quando o voucher foi reemitido por reajuste de valor */
-const PREFIXO_VOUCHER_ATUALIZADO = `🔄 *Importante: seu voucher foi atualizado!*
-Reajustamos o valor dos nossos serviços, por isso emitimos um *código novo* para você. O código anterior foi cancelado e não funciona mais.
-
-`;
-
 /**
  * Substitui variáveis do template de entrega no modal.
  * {data_validade} = só a data (dd/mm/aaaa) da validade do voucher no formulário — sem prefixo (o template pode escrever "Válido até:").
@@ -124,7 +118,6 @@ export const FidelizacaoTab = () => {
   const [voucherMensagem, setVoucherMensagem] = useState('');
   const [isSavingEntrega, setIsSavingEntrega] = useState(false);
   const [gerandoVoucherId, setGerandoVoucherId] = useState<number | null>(null);
-  const [regerandoVoucherId, setRegerandoVoucherId] = useState<number | null>(null);
 
   // Estados para Notificações (aba Notificações)
   const [notificacoes, setNotificacoes] = useState<any[]>([]);
@@ -720,7 +713,7 @@ export const FidelizacaoTab = () => {
 
   /** Filtra e pagina clientes do modal de pré-visualização */
   const getPreviewListFilteredAndPaged = () => {
-    if (!previewListData?.clientes) return { filtered: [], total: 0, totalPages: 0 };
+    if (!previewListData?.clientes) return { filtered: [], total: 0, totalPages: 0, page: 1 };
     const search = previewListSearch.trim().toLowerCase();
     const filtered = search
       ? previewListData.clientes.filter(
@@ -795,31 +788,6 @@ export const FidelizacaoTab = () => {
     }
   };
 
-  const handleRegerarVoucher = async (conquista: Conquista) => {
-    setRegerandoVoucherId(conquista.id);
-    try {
-      const result = await fidelizacaoService.regerarVoucherConquista(conquista.id);
-      toast.success(`Voucher atualizado: ${result.codigoAnterior} → ${result.novoCodigo}`);
-      // Atualizar apenas esta linha sem recarregar a tabela toda
-      setConquistas(prev => prev.map(c => {
-        if (c.id !== conquista.id) return c;
-        return {
-          ...c,
-          codigoVoucher: result.codigoVoucher,
-          codigoVoucherAnterior: result.codigoVoucherAnterior,
-          voucherAtualizadoEm: result.voucherAtualizadoEm,
-          dataValidade: result.dataValidade,
-          precisaRegerar: false,
-        };
-      }));
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Erro ao regerar voucher');
-      console.error(error);
-    } finally {
-      setRegerandoVoucherId(null);
-    }
-  };
-
   const handleOpenEntregaModal = async (conquista: Conquista) => {
     setConquistaSelecionada(conquista);
     const codigoInicial = (conquista.codigoVoucher || '').trim();
@@ -846,10 +814,8 @@ export const FidelizacaoTab = () => {
     setVoucherMensagem('Carregando modelo da mensagem…');
     setShowEntregaModal(true);
 
-    const foiAtualizado = !!conquista.voucherAtualizadoEm;
-
-    const aplicarTemplate = (raw: string, validadeDiasPremio: number | null | undefined) => {
-      const mensagemBase = buildMensagemEntregaModalCompleta(
+    const aplicarTemplate = (raw: string, validadeDiasPremio: number | null | undefined) =>
+      buildMensagemEntregaModalCompleta(
         raw,
         conquista.nomeCliente || 'Cliente',
         conquista.premioDescricao,
@@ -857,9 +823,6 @@ export const FidelizacaoTab = () => {
         codigoInicial,
         validadeIso
       );
-      // Se voucher foi reemitido por reajuste, prefixar com o aviso
-      return foiAtualizado ? PREFIXO_VOUCHER_ATUALIZADO + mensagemBase : mensagemBase;
-    };
 
     try {
       const [{ config }, premiosList] = await Promise.all([
@@ -1398,7 +1361,7 @@ export const FidelizacaoTab = () => {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-4 text-sm min-w-[200px]">
+                        <td className="px-4 py-4 whitespace-nowrap text-sm">
                           {!conquista.utilizado && !isExpired && (
                             <div className="flex flex-col gap-2">
                               <button
@@ -1421,21 +1384,6 @@ export const FidelizacaoTab = () => {
                                   Gerar Voucher
                                 </button>
                               )}
-                              {conquista.precisaRegerar && (
-                                <button
-                                  onClick={() => handleRegerarVoucher(conquista)}
-                                  disabled={regerandoVoucherId === conquista.id}
-                                  title={`Valor emitido R$${(conquista.voucherValorEmitido ?? conquista.valorVoucherGerado)?.toFixed(2)} difere do valor atual R$${conquista.premioValorVoucher?.toFixed(2)}`}
-                                  className="flex items-center gap-1 text-orange-600 hover:text-orange-800 font-medium disabled:opacity-50"
-                                >
-                                  {regerandoVoucherId === conquista.id ? (
-                                    <Loader className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Zap className="w-3 h-3" />
-                                  )}
-                                  Atualizar Voucher
-                                </button>
-                              )}
                               <button
                                 onClick={() => handleOpenEntregaModal(conquista)}
                                 className="flex items-center gap-1 text-green-600 hover:text-green-800 font-medium"
@@ -1445,36 +1393,9 @@ export const FidelizacaoTab = () => {
                               </button>
                             </div>
                           )}
-                          {/* Exibição do voucher: código anterior tachado + novo código */}
                           {conquista.codigoVoucher && (
-                            <div className="mt-2 text-xs space-y-1">
-                              {conquista.voucherAtualizadoEm && conquista.codigoVoucherAnterior && (
-                                <div className="flex items-center gap-1 text-gray-400">
-                                  <span className="line-through">{conquista.codigoVoucherAnterior}</span>
-                                </div>
-                              )}
-                              <div className="flex items-center gap-1">
-                                {conquista.voucherAtualizadoEm ? (
-                                  <span className="flex items-center gap-1 font-semibold text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
-                                    <Zap className="w-3 h-3" />
-                                    {conquista.codigoVoucher}
-                                  </span>
-                                ) : (
-                                  <span className="font-medium text-gray-700">{conquista.codigoVoucher}</span>
-                                )}
-                              </div>
-                              {conquista.voucherAtualizadoEm && (
-                                <div className="text-orange-600 font-medium">
-                                  Voucher atualizado
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {/* Alerta de valor divergente ainda não corrigido */}
-                          {conquista.precisaRegerar && (
-                            <div className="mt-1 text-xs text-orange-600 flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                              <span>Valor desatualizado (R${(conquista.voucherValorEmitido ?? conquista.valorVoucherGerado)?.toFixed(2)})</span>
+                            <div className="mt-1 text-xs text-gray-500">
+                              Voucher: <span className="font-medium text-gray-700">{conquista.codigoVoucher}</span>
                             </div>
                           )}
                         </td>

@@ -88,7 +88,7 @@ async function main() {
     const encontradoNoBanco = noBanco.length > 0;
     if (encontradoNoBanco) {
       console.log('\n  [BANCO] Código', CODIGO_BUSCA, 'ENCONTRADO em vm_lav_vouchers.');
-      noBanco.forEach((r: any, i: number) => {
+      noBanco.forEach((r: any, _i: number) => {
         console.log('    Registro:', { id: r.id, id_voucher_vm: r.id_voucher_vm, codigo: r.codigo, categoria_nome: r.categoria_nome, data_gerado: r.data_gerado, valor: r.valor, saldo: r.saldo, created_at: r.created_at });
       });
     } else {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Message } from '../types';
 import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Bot, User, Check, CheckCheck, Image, Video, FileText, Mic } from 'lucide-react';
+import { Bot, User, Check, CheckCheck, Video, FileText, Mic } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
 
@@ -242,7 +242,7 @@ export const MessageList = ({ messages, conversationId }: MessageListProps) => {
                                 preload="metadata"
                                 onError={() => {
                                   // Marcar este vídeo como com erro
-                                  setVideoErrors(prev => new Set(prev).add(message.media.id));
+                                  setVideoErrors(prev => new Set(prev).add(message.media!.id));
                                 }}
                               >
                                 Seu navegador não suporta a reprodução de vídeos.
@@ -378,11 +378,11 @@ export const MessageList = ({ messages, conversationId }: MessageListProps) => {
                           {message.readAt ? (
                             <CheckCheck className={`w-3.5 h-3.5 ${
                               message.isFromAi ? 'text-primary-100' : 'text-gray-500'
-                            }`} title={`Lida em ${message.readAt ? format(new Date(message.readAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ''}`} />
+                            }`} {...{ title: `Lida em ${message.readAt ? format(new Date(message.readAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ''}` }} />
                           ) : message.receivedAt ? (
                             <Check className={`w-3.5 h-3.5 ${
                               message.isFromAi ? 'text-primary-100' : 'text-gray-500'
-                            }`} title={`Recebida em ${message.receivedAt ? format(new Date(message.receivedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ''}`} />
+                            }`} {...{ title: `Recebida em ${message.receivedAt ? format(new Date(message.receivedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ''}` }} />
                           ) : null}
                         </div>
                       )}

@@ -155,7 +155,7 @@ export const sendMessage = async (
 
     res.json({
       message: 'Mensagem enviada com sucesso',
-      messageId: message?.id?._serialized ?? null,
+      messageId: message.id._serialized,
     });
   } catch (error: any) {
     next(error);

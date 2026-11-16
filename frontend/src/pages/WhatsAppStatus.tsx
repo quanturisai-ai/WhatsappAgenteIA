@@ -65,7 +65,7 @@ export const WhatsAppStatus = () => {
             qrCode: null,
             status: 'connecting',
           }));
-          toast.info('QR Code expirado. Aguardando novo QR code...');
+          toast('QR Code expirado. Aguardando novo QR code...', { icon: 'ℹ️' });
         });
 
         // Ouvir evento de ready

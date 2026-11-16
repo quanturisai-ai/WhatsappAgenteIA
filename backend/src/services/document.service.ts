@@ -1,18 +1,19 @@
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+// @ts-ignore - pdf-parse não possui tipos instalados
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import logger from '../utils/logger';
 import { DocumentModel } from '../models/document.model';
 import { DocumentChunkModel } from '../models/documentChunk.model';
-import { OpenRouterService } from './openrouter.service';
+import { OllamaService } from './ollama.service';
 import { ChromaDBService } from './chromadb.service';
 
 export class DocumentService {
   private documentModel: DocumentModel;
   private chunkModel: DocumentChunkModel;
-  private ollamaService: OpenRouterService;
+  private ollamaService: OllamaService;
   private chromaService: ChromaDBService;
   private uploadPath: string;
   private chunkSize: number = 1000; // caracteres
@@ -20,7 +21,7 @@ export class DocumentService {
   constructor() {
     this.documentModel = new DocumentModel();
     this.chunkModel = new DocumentChunkModel();
-    this.ollamaService = new OpenRouterService();
+    this.ollamaService = new OllamaService();
     this.chromaService = new ChromaDBService();
     this.uploadPath = path.join(process.cwd(), 'uploads');
     
@@ -35,10 +36,10 @@ export class DocumentService {
    */
   getUploadMiddleware() {
     const storage = multer.diskStorage({
-      destination: (req, file, cb) => {
+      destination: (_req, _file, cb) => {
         cb(null, this.uploadPath);
       },
-      filename: (req, file, cb) => {
+      filename: (_req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
         cb(null, `${uniqueSuffix}-${file.originalname}`);
       },
@@ -49,7 +50,7 @@ export class DocumentService {
       limits: {
         fileSize: 10 * 1024 * 1024, // 10MB
       },
-      fileFilter: (req, file, cb) => {
+      fileFilter: (_req, file, cb) => {
         const allowedTypes = ['.txt', '.pdf', '.docx'];
         const ext = path.extname(file.originalname).toLowerCase();
         

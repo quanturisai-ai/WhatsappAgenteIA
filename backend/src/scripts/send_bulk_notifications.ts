@@ -116,7 +116,7 @@ async function run() {
                 const sendRes = await fetch(`${API_URL}/conversations/send`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ conversationId, content: mensagem, source: 'automation' })
+                    body: JSON.stringify({ conversationId, content: mensagem })
                 });
 
                 const sendData = await sendRes.json() as any;

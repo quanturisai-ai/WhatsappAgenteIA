@@ -416,43 +416,6 @@ export async function migrateVmLavTables(): Promise<void> {
         );
         logger.info('✅ Coluna conquista_notificacao_id adicionada em premios_clientes');
       }
-
-      // --- valor registrado no momento da geração do voucher ---
-      const [cvvg] = await conn.query(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'valor_voucher_gerado'`
-      ) as any[];
-      if (!cvvg || cvvg.length === 0) {
-        await conn.query(
-          `ALTER TABLE premios_clientes ADD COLUMN valor_voucher_gerado DECIMAL(10,2) NULL 
-           COMMENT 'Valor do voucher no momento da geração (permite detectar divergência sem sync vm_lav_vouchers)' AFTER conquista_notificacao_id`
-        );
-        logger.info('✅ Coluna valor_voucher_gerado adicionada em premios_clientes');
-      }
-
-      // --- colunas de reemissão de voucher por reajuste de valor ---
-      const [cva] = await conn.query(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'codigo_voucher_anterior'`
-      ) as any[];
-      if (!cva || cva.length === 0) {
-        await conn.query(
-          `ALTER TABLE premios_clientes ADD COLUMN codigo_voucher_anterior VARCHAR(50) NULL 
-           COMMENT 'Código do voucher inativado quando este foi reemitido por reajuste de valor' AFTER conquista_notificacao_id`
-        );
-        logger.info('✅ Coluna codigo_voucher_anterior adicionada em premios_clientes');
-      }
-      const [cvau] = await conn.query(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'premios_clientes' AND COLUMN_NAME = 'voucher_atualizado_em'`
-      ) as any[];
-      if (!cvau || cvau.length === 0) {
-        await conn.query(
-          `ALTER TABLE premios_clientes ADD COLUMN voucher_atualizado_em DATETIME NULL 
-           COMMENT 'Quando o voucher foi reemitido por reajuste de valor' AFTER codigo_voucher_anterior`
-        );
-        logger.info('✅ Coluna voucher_atualizado_em adicionada em premios_clientes');
-      }
     } catch (error: any) {
       logger.warn('Erro ao verificar/adicionar colunas em premios_clientes: ' + String(error.message));
     }

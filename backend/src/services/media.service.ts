@@ -3,18 +3,18 @@ import path from 'path';
 import multer from 'multer';
 import logger from '../utils/logger';
 import { MediaModel } from '../models/media.model';
-import { OpenRouterService } from './openrouter.service';
+import { OllamaService } from './ollama.service';
 import { ChromaDBService } from './chromadb.service';
 
 export class MediaService {
   private mediaModel: MediaModel;
-  private ollamaService: OpenRouterService;
+  private ollamaService: OllamaService;
   private chromaService: ChromaDBService;
   private uploadPath: string;
 
   constructor() {
     this.mediaModel = new MediaModel();
-    this.ollamaService = new OpenRouterService();
+    this.ollamaService = new OllamaService();
     this.chromaService = new ChromaDBService();
     this.uploadPath = path.join(process.cwd(), 'uploads', 'medias');
     
@@ -29,10 +29,10 @@ export class MediaService {
    */
   getUploadMiddleware() {
     const storage = multer.diskStorage({
-      destination: (req, file, cb) => {
+      destination: (_req, _file, cb) => {
         cb(null, this.uploadPath);
       },
-      filename: (req, file, cb) => {
+      filename: (_req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
         cb(null, `${uniqueSuffix}-${file.originalname}`);
       },
@@ -43,7 +43,7 @@ export class MediaService {
       limits: {
         fileSize: 50 * 1024 * 1024, // 50MB
       },
-      fileFilter: (req, file, cb) => {
+      fileFilter: (_req, file, cb) => {
         // Permitir vídeos, imagens e documentos
         const allowedMimeTypes = [
           // Vídeos
@@ -107,6 +107,8 @@ export class MediaService {
         description,
         status: 'processing',
         indexing_status: 'pending',
+        is_active: true,
+        mandatory_send: false,
       });
 
       try {
@@ -301,7 +303,7 @@ export class MediaService {
             status: 'completed',
             indexing_status: 'indexed',
             last_indexed_at: new Date(),
-            error_message: null, // Garantir que não há mensagem de erro
+            error_message: null as any, // Garantir que não há mensagem de erro
           });
 
           logger.info(`Mídia atualizada e re-embeda: ${media.filename} (ID: ${mediaId})`);

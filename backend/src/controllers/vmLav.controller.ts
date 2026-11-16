@@ -304,7 +304,7 @@ export const listarClientes = async (
  * Fechar navegador Puppeteer (após configuração)
  */
 export const fecharNavegador = async (
-  req: Request,
+  _req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {

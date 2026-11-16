@@ -3,8 +3,7 @@
  * Implementa métodos validados: 4A (fixo) e 4B (dinâmico)
  */
 
-import puppeteer, { Page } from 'puppeteer';
-import logger from './logger';
+import { Page } from 'puppeteer';
 
 const tokenRenovacaoUrlBase = 'https://apps.vmhub.vmtecnologia.io/autenticacao/api/v1/autenticacao/token/renovacao/aplicacao';
 const tokenAplicacaoUrl = 'https://apps.vmhub.vmtecnologia.io/conta/api/v1/contas-usuarios/login/aplicacao';
@@ -18,24 +17,6 @@ export function extrairAuthDoToken(token: string): number | null {
     return payload.auth || null;
   } catch (e) {
     return null;
-  }
-}
-
-/**
- * Verifica se o token já É o token da aplicação (clientId 'vmlav').
- *
- * O SPA da VM Hub faz a troca `/login/aplicacao` por conta própria e grava o
- * resultado em localStorage.token. Reenviar esse token para o endpoint de troca
- * devolve 403 — ele já foi trocado. Quem tem clientId 'vmlav' deve ser usado
- * direto como token_aplicacao, sem nova requisição.
- */
-export function isTokenDaAplicacao(token: string | null | undefined): boolean {
-  if (!token) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-    return payload.clientId === 'vmlav';
-  } catch (e) {
-    return false;
   }
 }
 

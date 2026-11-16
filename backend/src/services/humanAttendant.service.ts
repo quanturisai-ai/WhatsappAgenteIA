@@ -136,7 +136,7 @@ Acesse o dashboard para atender.`;
           // Enviar para todos os atendentes ativos
           const sendPromises = activeAttendants.map(async (attendant) => {
             try {
-              await whatsappService.sendMessage(attendant.phone_number, message, false, false, null, 'automation');
+              await whatsappService.sendMessage(attendant.phone_number, message);
               logger.info(`Alerta enviado para atendente ${attendant.phone_number} (conversa ${conversationId})`);
             } catch (error: any) {
               logger.error(`Erro ao enviar alerta para atendente ${attendant.phone_number}: ${error.message}`);
@@ -165,7 +165,7 @@ Esta é uma mensagem de teste do sistema de alertas para atendente humano.
 
 Se você recebeu esta mensagem, o sistema está configurado corretamente!`;
 
-      await whatsappService.sendMessage(phoneNumber, message, false, false, null, 'automation');
+      await whatsappService.sendMessage(phoneNumber, message);
       logger.info(`Mensagem de teste enviada para ${phoneNumber}`);
     } catch (error: any) {
       logger.error(`Erro ao enviar mensagem de teste: ${error.message}`);

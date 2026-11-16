@@ -11,7 +11,7 @@ const regraModel = new FidelizacaoRegraModel();
 const configModel = new FidelizacaoRegrasConfigModel();
 const regrasService = new FidelizacaoRegrasService();
 
-export const listarTiposGatilho = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const listarTiposGatilho = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const tipos = await tipoGatilhoModel.findAll(true);
     res.json({ tipos });
@@ -42,7 +42,7 @@ export const updateConfig = async (req: Request, res: Response, next: NextFuncti
       max_mensagens_por_cliente_semana: max_mensagens_por_cliente_semana ?? 2,
       max_mensagens_por_cliente_mes: max_mensagens_por_cliente_mes ?? 4,
       simulacao: simulacao === true || simulacao === 'true',
-    });
+    } as any);
     res.json(config);
   } catch (error: any) {
     next(error);

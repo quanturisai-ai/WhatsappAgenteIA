@@ -7,9 +7,8 @@ import { VmLavPedidoModel, VmLavPedido } from '../models/vmLavPedido.model';
 import { VmLavVoucherModel } from '../models/vmLavVoucher.model';
 import { VmLavSincronizacaoLogModel } from '../models/vmLavSincronizacaoLog.model';
 import { PremioClienteModel } from '../models/premioCliente.model';
-import puppeteer, { Browser, Page } from 'puppeteer';
+import { Browser, Page } from 'puppeteer';
 import { normalizeCpfToDigits, normalizeCpfColumnSql } from '../utils/cpfUtils';
-import { isTokenDaAplicacao } from '../utils/vmLavTokenRenewal';
 
 
 interface LoginResponse {
@@ -898,18 +897,6 @@ export class VmLavService {
       }
 
       if (credentials.token_inicial && this.isTokenValido(credentials.token_inicial)) {
-        // Se o token_inicial JÁ é da aplicação (clientId 'vmlav'), não há troca a fazer:
-        // reenviá-lo para /login/aplicacao devolve 403. Promove direto e evita a requisição.
-        if (isTokenDaAplicacao(credentials.token_inicial)) {
-          logger.info(`token_inicial já é da aplicação para usuário ${userId}. Promovendo sem nova requisição.`);
-          await this.credentialsModel.update(credentials.id, {
-            token_aplicacao: credentials.token_inicial,
-            token_expira_em: this.getTokenExpiration(credentials.token_inicial),
-          });
-
-          return credentials.token_inicial;
-        }
-
         logger.info(`Renovando token da aplicação para usuário ${userId}`);
         const novoTokenAplicacao = await this.obterTokenAplicacao(credentials.token_inicial);
 
@@ -969,22 +956,10 @@ export class VmLavService {
   }
 
   /**
-   * Token para sincronizações agendadas: mesma ordem de revalidação que obterTokenValido.
-   *
-   * NÃO abre login com e-mail/senha por conta própria. O login da VM Lav depende de
-   * reCAPTCHA, que exige um humano na frente da tela — dispará-lo em background só
-   * produz janelas de browser que ninguém resolve, em laço. Quando a revalidação não
-   * basta, a credencial é marcada para intervenção manual e o ciclo para aqui.
-   *
-   * O login interativo continua disponível pela ação explícita do usuário na interface
-   * (POST /api/vmlav/credentials -> conectar()), ou passando permitirLoginInterativo.
+   * Token para sincronizações agendadas: mesma ordem de revalidação que obterTokenValido;
+   * só após falha tenta login automático (último recurso), como no fluxo combinado com o usuário.
    */
-  async obterTokenParaSincronizacao(
-    userId: number,
-    opcoes: { permitirLoginInterativo?: boolean } = {}
-  ): Promise<string | null> {
-    const { permitirLoginInterativo = false } = opcoes;
-
+  async obterTokenParaSincronizacao(userId: number): Promise<string | null> {
     try {
       let token = await this.obterTokenViaRenovacaoSomente(userId);
       if (token) {
@@ -997,24 +972,12 @@ export class VmLavService {
         return null;
       }
 
-      if (!permitirLoginInterativo) {
-        logger.warn(
-          `Usuário ${userId}: sem token após revalidação (VM Lav). Login automático NÃO será disparado (exige reCAPTCHA e presença humana). Aguardando reconexão manual.`
-        );
-        await this.credentialsModel.update(credentials.id, {
-          status: 'erro',
-          ultimo_erro:
-            'Revalidação de token falhou. Reconecte a VM Lav manualmente na interface (o login exige reCAPTCHA).',
-        });
-        return null;
-      }
-
       logger.info(
-        `Usuário ${userId}: sem token após revalidação (VM Lav). Login interativo autorizado, tentando como último recurso...`
+        `Usuário ${userId}: sem token após revalidação (VM Lav). Tentando login automático como último recurso...`
       );
       const viaLogin = await this.reconectarAutomaticamente(credentials);
       if (viaLogin) {
-        logger.info(`Login interativo (último recurso) bem-sucedido para usuário ${userId}`);
+        logger.info(`Login automático (último recurso) bem-sucedido para usuário ${userId}`);
         return viaLogin;
       }
 
@@ -1024,12 +987,12 @@ export class VmLavService {
       }
 
       logger.warn(
-        `Não foi possível obter token VM Lav para usuário ${userId} após revalidação e login interativo.`
+        `Não foi possível obter token VM Lav para usuário ${userId} após revalidação e login automático.`
       );
       await this.credentialsModel.update(credentials.id, {
         status: 'erro',
         ultimo_erro:
-          'Falha após revalidação de token, restauração de sessão e login interativo. Reconfigure credenciais ou faça login manual na VM Lav.',
+          'Falha após revalidação de token, restauração de sessão e login automático. Reconfigure credenciais ou faça login manual na VM Lav.',
       });
       return null;
     } catch (error: any) {
@@ -1255,19 +1218,6 @@ export class VmLavService {
         ultimo_erro: null,
       });
 
-      // O token do localStorage normalmente JÁ é o da aplicação (o SPA faz a troca sozinho).
-      // Nesse caso trocá-lo de novo devolve 403 e token_aplicacao ficaria sem ser gravado,
-      // fazendo todo acesso seguinte cair no login com captcha. Promove direto.
-      if (isTokenDaAplicacao(tokenFromStorage)) {
-        logger.info('Token do login já é da aplicação (clientId vmlav). Usando direto, sem nova requisição.');
-        await this.credentialsModel.update(credentials.id, {
-          token_aplicacao: tokenFromStorage,
-          token_expira_em: this.getTokenExpiration(tokenFromStorage),
-        });
-        await this.fecharNavegador();
-        return tokenFromStorage;
-      }
-
       const tokenAplicacao = await this.obterTokenAplicacao(tokenFromStorage);
       if (tokenAplicacao) {
         await this.credentialsModel.update(credentials.id, {
@@ -1278,13 +1228,6 @@ export class VmLavService {
         return tokenAplicacao;
       }
 
-      // Troca falhou, mas o token do login funciona nas APIs. Persistir mesmo assim:
-      // sem isso token_aplicacao nunca é escrito e a próxima chamada reabre o login.
-      logger.warn('Troca de token falhou; persistindo o token do login como token_aplicacao.');
-      await this.credentialsModel.update(credentials.id, {
-        token_aplicacao: tokenFromStorage,
-        token_expira_em: this.getTokenExpiration(tokenFromStorage),
-      });
       await this.fecharNavegador();
       return tokenFromStorage;
     } catch (error: any) {
@@ -2562,49 +2505,6 @@ export class VmLavService {
   }
 
   /**
-   * Inativa um voucher na API VM via PATCH /vouchers/{id}/situacao
-   * Usado antes de reemitir um voucher por reajuste de valor.
-   */
-  async inativarVoucher(userId: number, idVoucherVm: number): Promise<{ success: boolean; error?: string }> {
-    try {
-      const token = await this.obterTokenValido(userId);
-      if (!token) {
-        return { success: false, error: 'Token inválido ou expirado.' };
-      }
-      const url = `https://apps.vmhub.vmtecnologia.io/wallet/api/v1/vouchers/${idVoucherVm}/situacao`;
-      await axios.patch(url, { novaSituacao: false }, {
-        headers: this.getHeadersWallet(token),
-        timeout: 15000,
-      });
-      return { success: true };
-    } catch (error: any) {
-      logger.error(`[inativarVoucher] Erro ao inativar voucher ${idVoucherVm}: ${error.message}`);
-      return { success: false, error: error.response?.data?.message || error.message };
-    }
-  }
-
-  /**
-   * Reativa um voucher na API VM (rollback de emergência após falha de reemissão).
-   */
-  async reativarVoucher(userId: number, idVoucherVm: number): Promise<{ success: boolean; error?: string }> {
-    try {
-      const token = await this.obterTokenValido(userId);
-      if (!token) {
-        return { success: false, error: 'Token inválido ou expirado.' };
-      }
-      const url = `https://apps.vmhub.vmtecnologia.io/wallet/api/v1/vouchers/${idVoucherVm}/situacao`;
-      await axios.patch(url, { novaSituacao: true }, {
-        headers: this.getHeadersWallet(token),
-        timeout: 15000,
-      });
-      return { success: true };
-    } catch (error: any) {
-      logger.error(`[reativarVoucher] Erro ao reativar voucher ${idVoucherVm}: ${error.message}`);
-      return { success: false, error: error.response?.data?.message || error.message };
-    }
-  }
-
-  /**
    * Obtém o código do voucher via GET /vouchers/{id}
    */
   async obterCodigoVoucher(userId: number, idVoucher: number): Promise<{ success: boolean; codigo?: string; error?: string }> {
@@ -2897,17 +2797,13 @@ export class VmLavService {
   async marcarPremiosUtilizadosPorSaldoVoucher(userId: number): Promise<{ marcados: number }> {
     const conn = await pool.getConnection();
     try {
-      // Só considera voucher "utilizado" se ele estiver ativo na VM (ativo = 1).
-      // Vouchers inativados manualmente (ex: reemissão por reajuste) são ignorados aqui —
-      // a conquista não deve ser marcada como utilizada porque receberá novo voucher.
       const result = await conn.query(
         `UPDATE premios_clientes pc
          INNER JOIN vm_lav_vouchers v ON v.user_id = pc.user_id AND v.codigo = pc.codigo_voucher
          SET pc.utilizado = 1,
              pc.data_utilizacao = COALESCE(v.updated_at, NOW()),
              pc.observacao = COALESCE(pc.observacao, 'Utilizado (saldo zerado no voucher)')
-         WHERE pc.user_id = ? AND pc.utilizado = 0 AND pc.codigo_voucher IS NOT NULL
-           AND v.saldo < 1 AND v.ativo = 1`,
+         WHERE pc.user_id = ? AND pc.utilizado = 0 AND pc.codigo_voucher IS NOT NULL AND v.saldo < 1`,
         [userId]
       ) as any;
       const affected = result?.affectedRows ?? result?.[0]?.affectedRows ?? 0;
