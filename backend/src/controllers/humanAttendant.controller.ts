@@ -3,7 +3,6 @@ import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { HumanAttendantService } from '../services/humanAttendant.service';
 import { WhatsAppManager } from '../services/whatsapp.manager';
-import logger from '../utils/logger';
 
 const humanAttendantService = new HumanAttendantService();
 
@@ -63,7 +62,7 @@ export const createAttendant = async (
       throw appError;
     }
 
-    const attendant = await humanAttendantService.createAttendant(
+    const attendant: any = await humanAttendantService.createAttendant(
       userId,
       phoneNumber.trim(),
       name?.trim() || null,
@@ -123,7 +122,7 @@ export const updateAttendant = async (
       throw appError;
     }
 
-    const attendant = await humanAttendantService.updateAttendant(
+    const attendant: any = await humanAttendantService.updateAttendant(
       attendantId,
       userId,
       phoneNumber.trim(),
@@ -229,9 +228,6 @@ export const getAlertsByConversation = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const authReq = req as AuthRequest;
-    const userId = authReq.userId!;
-
     const { id } = req.params;
     const conversationId = parseInt(id);
 

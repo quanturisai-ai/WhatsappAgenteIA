@@ -3,8 +3,7 @@
  * Implementa métodos validados: 4A (fixo) e 4B (dinâmico)
  */
 
-import puppeteer, { Page } from 'puppeteer';
-import logger from './logger';
+import { Page } from 'puppeteer';
 
 const tokenRenovacaoUrlBase = 'https://apps.vmhub.vmtecnologia.io/autenticacao/api/v1/autenticacao/token/renovacao/aplicacao';
 const tokenAplicacaoUrl = 'https://apps.vmhub.vmtecnologia.io/conta/api/v1/contas-usuarios/login/aplicacao';

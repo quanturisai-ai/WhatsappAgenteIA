@@ -93,8 +93,8 @@ class FidelizacaoService {
   async criarPremio(premio: Omit<Premio, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<Premio> {
     const response = await api.post('/fidelizacao/premios', {
       ...premio,
-      data_inicio_utilizacoes: premio.data_inicio_utilizacoes instanceof Date
-        ? premio.data_inicio_utilizacoes.toISOString().split('T')[0]
+      data_inicio_utilizacoes: (premio.data_inicio_utilizacoes as unknown) instanceof Date
+        ? (premio.data_inicio_utilizacoes as unknown as Date).toISOString().split('T')[0]
         : premio.data_inicio_utilizacoes,
     });
     return response.data.premio;
@@ -104,8 +104,8 @@ class FidelizacaoService {
     const payload: any = { ...premio };
     // Sempre processar data_inicio_utilizacoes se estiver presente no objeto
     if ('data_inicio_utilizacoes' in premio) {
-      payload.data_inicio_utilizacoes = premio.data_inicio_utilizacoes instanceof Date
-        ? premio.data_inicio_utilizacoes.toISOString().split('T')[0]
+      payload.data_inicio_utilizacoes = (premio.data_inicio_utilizacoes as unknown) instanceof Date
+        ? (premio.data_inicio_utilizacoes as unknown as Date).toISOString().split('T')[0]
         : premio.data_inicio_utilizacoes;
     }
     const response = await api.put(`/fidelizacao/premios/${id}`, payload);

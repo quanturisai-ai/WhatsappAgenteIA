@@ -64,7 +64,7 @@ export const Indexing = () => {
 
   const handleStartIndexing = async () => {
     if (stats.pending === 0 && stats.error === 0) {
-      toast.info('Não há conteúdos pendentes para indexar');
+      toast('Não há conteúdos pendentes para indexar', { icon: 'ℹ️' });
       return;
     }
 

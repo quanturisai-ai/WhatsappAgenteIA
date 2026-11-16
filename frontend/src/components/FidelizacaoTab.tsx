@@ -713,7 +713,7 @@ export const FidelizacaoTab = () => {
 
   /** Filtra e pagina clientes do modal de pré-visualização */
   const getPreviewListFilteredAndPaged = () => {
-    if (!previewListData?.clientes) return { filtered: [], total: 0, totalPages: 0 };
+    if (!previewListData?.clientes) return { filtered: [], total: 0, totalPages: 0, page: 1 };
     const search = previewListSearch.trim().toLowerCase();
     const filtered = search
       ? previewListData.clientes.filter(

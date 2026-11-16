@@ -13,7 +13,7 @@ export const NewConversationModal = ({ isOpen, onClose, onSelectClient }: NewCon
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<VmLavCliente[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!isOpen) {

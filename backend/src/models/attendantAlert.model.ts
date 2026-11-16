@@ -1,6 +1,5 @@
 import pool from '../config/database';
 import { AttendantAlert } from '../types';
-import logger from '../utils/logger';
 
 export class AttendantAlertModel {
   async create(alert: Omit<AttendantAlert, 'id' | 'sent_at'>): Promise<AttendantAlert> {

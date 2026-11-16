@@ -7,10 +7,7 @@
  * por concorrência ao compartilhar uma única página entre operações
  */
 
-import puppeteer, { Browser, Page } from 'puppeteer';
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
+import { Browser, Page } from 'puppeteer';
 import axios from 'axios';
 import logger from '../utils/logger';
 

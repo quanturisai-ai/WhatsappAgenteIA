@@ -1,5 +1,4 @@
 import pool from '../config/database';
-import logger from '../utils/logger';
 import { normalizeCpfToDigits, normalizeCpfColumnSql } from '../utils/cpfUtils';
 
 export interface PremioCliente {

@@ -228,7 +228,7 @@ export class WhatsAppRawMessageLogger {
         error: 'Erro ao serializar evento de reação',
         errorMessage: error.message,
         rawKeys: Object.keys(data),
-        rawData: JSON.stringify(data, (key, value) => {
+        rawData: JSON.stringify(data, (_key, value) => {
           if (typeof value === 'function') return '[Function]';
           if (value && typeof value === 'object') {
             try {
@@ -264,7 +264,7 @@ export class WhatsAppRawMessageLogger {
           serializedData = this.serializeMessage(data);
         } catch {
           // Se falhar, capturar tudo que for possível
-          serializedData = JSON.parse(JSON.stringify(data, (key, value) => {
+          serializedData = JSON.parse(JSON.stringify(data, (_key, value) => {
             if (typeof value === 'function') return '[Function]';
             if (value && typeof value === 'object') {
               try {
@@ -340,7 +340,7 @@ export class WhatsAppRawMessageLogger {
         event: 'ANY_EVENT',
         eventName,
         userId: userId || null,
-        payload: typeof payload === 'object' ? JSON.parse(JSON.stringify(payload, (key, value) => {
+        payload: typeof payload === 'object' ? JSON.parse(JSON.stringify(payload, (_key, value) => {
           // Remover funções e objetos circulares
           if (typeof value === 'function') {
             return '[Function]';

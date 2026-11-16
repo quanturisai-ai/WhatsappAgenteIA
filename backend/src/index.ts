@@ -315,7 +315,7 @@ io.on('connection', async (socket: Socket) => {
       logger.debug(`Evento ready recebido para usuário ${userId}`);
       // Enviar status atualizado quando ficar pronto
       try {
-        const _status = await service.getStatus();
+        await service.getStatus();
         emitToUserSockets('whatsapp:ready', { status: 'connected' });
         logger.debug(`Status 'connected' enviado para usuário ${userId}`);
       } catch (error: any) {

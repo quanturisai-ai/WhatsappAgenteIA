@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Bot, User, Image, Video, FileText } from 'lucide-react';
+import { X, Send, Bot, User, Video, FileText } from 'lucide-react';
 import { testChatService } from '../services/testChat.service';
 import toast from 'react-hot-toast';
 

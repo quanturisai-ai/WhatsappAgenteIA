@@ -32,7 +32,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@langchain/ollama": "^0.2.4",
+    "@langchain/ollama": "^1.0.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "chromadb": "^1.8.1",

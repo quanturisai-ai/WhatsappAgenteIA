@@ -34,6 +34,7 @@ export class ChromaDBService {
       
       try {
         // Tentar obter a coleção existente primeiro
+        // @ts-ignore - tipo do cliente ChromaDB
         collection = await this.client.getCollection({
           name: collectionName,
           // @ts-ignore - embeddingFunction é opcional no nosso caso
@@ -50,6 +51,7 @@ export class ChromaDBService {
           } catch (createError: any) {
             // Se falhar ao criar (pode ser que já existe), tentar obter novamente
             if (createError.message?.includes('already exists') || createError.message?.includes('The resource already exists')) {
+              // @ts-ignore - tipo do cliente ChromaDB
               collection = await this.client.getCollection({
                 name: collectionName,
                 // @ts-ignore - embeddingFunction é opcional no nosso caso

@@ -24,7 +24,7 @@ export const ConversationPanel = ({ conversation, onClose, onConversationUpdate 
   const [loadingFidelizacao, setLoadingFidelizacao] = useState(false);
   // Converter valor inicial para boolean (pode vir como 0/1 do banco)
   const initialAutoResponding = conversation.isAutoResponding;
-  const initialAutoRespondingBool = initialAutoResponding === true || initialAutoResponding === 1 || initialAutoResponding === '1';
+  const initialAutoRespondingBool = initialAutoResponding === true || (initialAutoResponding as unknown) === 1 || (initialAutoResponding as unknown) === '1';
   const [isAutoResponding, setIsAutoResponding] = useState(initialAutoRespondingBool);
 
   // Atualizar conversa local quando o prop mudar
@@ -133,7 +133,7 @@ export const ConversationPanel = ({ conversation, onClose, onConversationUpdate 
       // Isso garante que o estado sempre reflete o banco de dados
       // Converter explicitamente para boolean (pode vir como 0/1 do banco)
       const autoRespondingValue = data.conversation.isAutoResponding;
-      const isAutoRespondingBool = autoRespondingValue === true || autoRespondingValue === 1 || autoRespondingValue === '1';
+      const isAutoRespondingBool = autoRespondingValue === true || (autoRespondingValue as unknown) === 1 || (autoRespondingValue as unknown) === '1';
       console.log(`Estado de auto-resposta carregado:`, {
         raw: autoRespondingValue,
         type: typeof autoRespondingValue,

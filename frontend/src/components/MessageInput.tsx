@@ -12,7 +12,7 @@ interface MessageInputProps {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
 
-export const MessageInput = ({ onSend, onSendMedia, conversationId }: MessageInputProps) => {
+export const MessageInput = ({ onSend, onSendMedia }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [showOptions, setShowOptions] = useState(false);
   const [showMediaModal, setShowMediaModal] = useState(false);

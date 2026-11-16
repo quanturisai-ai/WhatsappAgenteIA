@@ -53,7 +53,7 @@ export class AgentConfigModel {
   async create(config: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'>): Promise<AgentConfig> {
     const conn = await pool.getConnection();
     try {
-      const _result = await conn.query(
+      await conn.query(
         `INSERT INTO agent_config 
          (user_id, business_name, business_info, services, hours, personality, 
           greeting_message, farewell_message, absence_message, specific_instructions,

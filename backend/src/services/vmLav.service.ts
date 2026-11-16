@@ -7,7 +7,7 @@ import { VmLavPedidoModel, VmLavPedido } from '../models/vmLavPedido.model';
 import { VmLavVoucherModel } from '../models/vmLavVoucher.model';
 import { VmLavSincronizacaoLogModel } from '../models/vmLavSincronizacaoLog.model';
 import { PremioClienteModel } from '../models/premioCliente.model';
-import puppeteer, { Browser, Page } from 'puppeteer';
+import { Browser, Page } from 'puppeteer';
 import { normalizeCpfToDigits, normalizeCpfColumnSql } from '../utils/cpfUtils';
 
 

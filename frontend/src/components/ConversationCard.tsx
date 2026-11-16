@@ -59,7 +59,7 @@ export const ConversationCard = ({ conversation, onClick }: ConversationCardProp
               {conversation.contactName || conversation.contactNumber}
             </h4>
             {conversation.needsIntervention && (
-              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" title="Precisa intervenção humana" />
+              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" {...{ title: 'Precisa intervenção humana' }} />
             )}
           </div>
           <p className="text-sm text-gray-500">{conversation.contactNumber}</p>
@@ -77,7 +77,7 @@ export const ConversationCard = ({ conversation, onClick }: ConversationCardProp
         </div>
       ) : (
         // Debug: mostrar se não há lastMessage
-        process.env.NODE_ENV === 'development' && (
+        import.meta.env.DEV && (
           <div className="mt-2 pt-2 border-t border-gray-100">
             <p className="text-xs text-gray-400 italic">
               (sem última mensagem)

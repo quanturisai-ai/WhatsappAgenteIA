@@ -1,4 +1,5 @@
 import { Client, LocalAuth, Message, Chat, MessageMedia } from 'whatsapp-web.js';
+import { SyncZapClient } from './synczap.client';
 import qrcode from 'qrcode-terminal';
 import { EventEmitter } from 'events';
 import path from 'path';
@@ -10,14 +11,13 @@ import { ConversationModel } from '../models/conversation.model';
 import { MessageModel } from '../models/message.model';
 import { ReactionModel } from '../models/reaction.model';
 import { WhatsAppRawMessageLogger } from '../utils/whatsappRawMessageLogger';
-import { emitConversationUpdated, emitConversationNew } from '../utils/conversationSocketEmitter';
+import { emitConversationUpdated, emitConversationNew, emitToUserEvent } from '../utils/conversationSocketEmitter';
 // WhatsAppSession type is used in model, not directly imported
 import { ConversationService } from './conversation.service';
 
 // IMPORTANTE: Configurar cache do Puppeteer ANTES de qualquer uso
 import { setupPuppeteerCache, detectChrome } from '../utils/puppeteer.util';
 setupPuppeteerCache();
-const chromeExecFound = detectChrome();
 
 export class WhatsAppService extends EventEmitter {
   private client: Client | null = null;
@@ -706,7 +706,10 @@ export class WhatsAppService extends EventEmitter {
       // Configurar cliente com opções para evitar múltiplas conexões
       // IMPORTANTE: Usar clientId único e dataPath isolado para cada usuário
       // Baseado nas issues do repositório: https://github.com/pedroslopez/whatsapp-web.js/issues
-      this.client = new Client({
+      // WHATSAPP_PROVIDER=synczap: cliente HTTP/stream do SyncZap no lugar do Chrome (whatsapp-web.js)
+      this.client = process.env.WHATSAPP_PROVIDER === 'synczap'
+        ? (new SyncZapClient() as unknown as Client)
+        : new Client({
         authStrategy: new LocalAuth({
           clientId: `user_${this.userId}`,
           dataPath: userSessionPath,
@@ -901,12 +904,11 @@ export class WhatsAppService extends EventEmitter {
         // Atualizar banco de dados
         await this.sessionModel.updateByUserId(this.userId, {
           status: 'connected',
-          authenticated: true,
           qr_code: undefined,
         });
 
         // Emitir evento para Socket.IO
-        this.io.to(`user_${this.userId}`).emit('whatsapp_status', {
+        emitToUserEvent(this.userId, 'whatsapp_status', {
           status: 'connected',
           authenticated: true,
           message: 'WhatsApp conectado com sucesso!',
@@ -1214,6 +1216,11 @@ export class WhatsAppService extends EventEmitter {
       }
 
       this.readyProcessing = true;
+      // SyncZap reemite 'ready' na reconexão pelo stream, sem passar por initialize(); um 'ready'
+      // do cliente vivo prova que ele está inicializado (o 'disconnected' havia zerado a flag).
+      if (process.env.WHATSAPP_PROVIDER === 'synczap' && this.client) {
+        this.isInitialized = true;
+      }
       logger.info(`✅ WhatsApp cliente pronto para usuário ${this.userId}`);
 
       try {
@@ -3134,6 +3141,12 @@ export class WhatsAppService extends EventEmitter {
   }
 
   isReady(): boolean {
+    // SyncZap: o estado real vem do próprio cliente (instância connected e laço de eventos ativo).
+    // As flags abaixo ficam false após um 'disconnected' seguido de reconexão pelo stream,
+    // que não passa por initialize().
+    if (process.env.WHATSAPP_PROVIDER === 'synczap') {
+      return this.client instanceof SyncZapClient && this.client.isConnected();
+    }
     // Verificar se o cliente está inicializado E realmente pronto (evento 'ready' foi disparado)
     return this.client !== null && this.isInitialized && this.isClientReady;
   }

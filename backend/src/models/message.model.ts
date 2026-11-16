@@ -1,5 +1,5 @@
 import pool from '../config/database';
-import { Message, Reaction } from '../types';
+import { Message } from '../types';
 import logger from '../utils/logger';
 import { ReactionModel } from './reaction.model';
 

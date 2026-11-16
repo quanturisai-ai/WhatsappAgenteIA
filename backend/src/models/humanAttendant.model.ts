@@ -1,6 +1,5 @@
 import pool from '../config/database';
 import { HumanAttendant } from '../types';
-import logger from '../utils/logger';
 
 export class HumanAttendantModel {
   async findByUserId(userId: number): Promise<HumanAttendant[]> {
